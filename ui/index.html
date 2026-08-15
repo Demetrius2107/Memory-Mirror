@@ -5,50 +5,260 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>记忆镜像 MemoryMirror</title>
   <style>
-    body { font-family: system-ui, "Microsoft YaHei", sans-serif; max-width: 640px; margin: 40px auto; padding: 0 16px; }
-    h1 small { font-size: 13px; color: #888; }
-    .card { border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin: 12px 0; }
-    button { padding: 8px 16px; margin-right: 8px; border: none; border-radius: 6px; background: #1677ff; color: #fff; cursor: pointer; }
-    #log { white-space: pre-wrap; background: #f6f6f6; border-radius: 6px; padding: 12px; font-size: 13px; height: 200px; overflow: auto; }
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, "Microsoft YaHei", sans-serif; margin: 0; background: #f5f6f8; color: #1f2328; }
+    header { background: #fff; border-bottom: 1px solid #e5e7eb; padding: 10px 24px; display: flex; align-items: center; gap: 24px; position: sticky; top: 0; z-index: 10; }
+    header h1 { font-size: 16px; margin: 0; }
+    header h1 small { color: #888; font-weight: normal; }
+    nav button { border: none; background: none; padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 14px; color: #555; }
+    nav button.active { background: #e8f0fe; color: #1677ff; font-weight: 600; }
+    main { max-width: 980px; margin: 20px auto; padding: 0 16px; }
+    .view { display: none; }
+    .view.active { display: block; }
+    .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px 20px; margin: 12px 0; }
+    .card h2 { margin: 0 0 12px; font-size: 15px; }
+    label { display: block; margin: 10px 0 4px; font-size: 13px; color: #555; }
+    input[type=text], input[type=file] { width: 100%; padding: 8px 10px; border: 1px solid #d0d5dd; border-radius: 6px; font-size: 14px; }
+    input[type=text] { margin-bottom: 4px; }
+    button { padding: 8px 18px; border: none; border-radius: 6px; background: #1677ff; color: #fff; cursor: pointer; font-size: 14px; margin: 6px 6px 6px 0; }
+    button.ghost { background: #fff; color: #1677ff; border: 1px solid #1677ff; }
+    .progress { height: 10px; background: #eee; border-radius: 5px; overflow: hidden; margin: 10px 0 6px; }
+    .progress > div { height: 100%; background: #1677ff; width: 0; transition: width .3s; }
+    .msg { font-size: 13px; color: #666; min-height: 18px; }
+    .msg.ok { color: #16a34a; }
+    .msg.err { color: #dc2626; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { padding: 8px 10px; border-bottom: 1px solid #f0f0f0; text-align: left; }
+    th { color: #888; font-weight: 500; font-size: 13px; }
+    tbody tr { cursor: pointer; }
+    tbody tr:hover { background: #f8faff; }
+    .bar { display: inline-block; background: #1677ff; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+    .hit { padding: 10px; border: 1px solid #eee; border-radius: 8px; margin: 8px 0; font-size: 14px; }
+    .hit .meta { font-size: 12px; color: #888; margin-top: 6px; }
+    .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; background: #f0f0f0; color: #555; margin-right: 6px; }
+    .hint { font-size: 12px; color: #999; }
   </style>
 </head>
 <body>
-  <h1>记忆镜像 MemoryMirror <small>Week 1 骨架（Tauri 壳 + FastAPI 引擎）</small></h1>
-  <div class="card" id="stats">加载中…</div>
-  <div class="card">
-    <button id="startWs">模拟导入进度（WebSocket）</button>
-    <button id="startSse">模拟 AI 问答（SSE）</button>
-  </div>
-  <div class="card"><div id="log"></div></div>
+<header>
+  <h1>🪞 记忆镜像 <small>MemoryMirror · 本地隐私优先</small></h1>
+  <nav>
+    <button class="tab active" data-view="wizard">数据接入</button>
+    <button class="tab" data-view="contacts">联系人</button>
+    <button class="tab" data-view="search">智能检索</button>
+  </nav>
+</header>
 
-  <script>
-    const log = document.getElementById('log');
-    function append(s) { log.textContent += s + '\n'; log.scrollTop = log.scrollHeight; }
+<main>
+  <!-- ============ 视图 1：数据接入向导 ============ -->
+  <section id="view-wizard" class="view active">
+    <div class="card">
+      <h2>① 导入数据（WeChatMsg CSV / chatlog JSONL / 通用 CSV）</h2>
+      <label>消息文件（本地选择并上传）</label>
+      <input type="file" id="fMsg" accept=".csv,.jsonl,.json" />
+      <button class="ghost" id="btnUpMsg">上传并填入路径</button>
+      <input type="text" id="pMsg" placeholder="或直接填写消息文件绝对路径（F:/.../messages.csv）" />
+      <label>联系人文件（可选，配对导入备注名，R17）</label>
+      <input type="file" id="fContact" accept=".csv" />
+      <button class="ghost" id="btnUpContact">上传并填入路径</button>
+      <input type="text" id="pContact" placeholder="联系人文件绝对路径（可选）" />
+      <label>群成员文件（可选）</label>
+      <input type="file" id="fMembers" accept=".csv" />
+      <button class="ghost" id="btnUpMembers">上传并填入路径</button>
+      <input type="text" id="pMembers" placeholder="群成员文件绝对路径（可选）" />
+      <div>
+        <button id="btnImport">开始导入</button>
+        <button class="ghost" id="btnDemo">使用演示数据集</button>
+      </div>
+      <div class="progress"><div id="importBar"></div></div>
+      <p class="msg" id="importMsg"></p>
+    </div>
+    <div class="card">
+      <h2>② 构建向量索引（智能检索前必需）</h2>
+      <button id="btnIndex">重建索引</button>
+      <div class="progress"><div id="indexBar"></div></div>
+      <p class="msg" id="indexMsg"></p>
+    </div>
+  </section>
 
-    fetch('/api/stats').then(r => r.json()).then(d => {
-      document.getElementById('stats').textContent =
-        `演示数据集：${d.total_messages} 条消息 / ${d.friends} 好友 / ${d.groups} 群`;
-    }).catch(e => append('❌ 引擎未就绪: ' + e));
+  <!-- ============ 视图 2：联系人 ============ -->
+  <section id="view-contacts" class="view">
+    <div class="card">
+      <h2>联系人 / 群聊（点击查看详情）</h2>
+      <input type="text" id="contactSearch" placeholder="搜索备注名 / 昵称…" />
+      <table>
+        <thead><tr><th>名称</th><th>类型</th><th>消息数</th><th>最近活跃</th></tr></thead>
+        <tbody id="contactRows"></tbody>
+      </table>
+    </div>
+    <div class="card" id="detailCard" style="display:none">
+      <h2 id="detailTitle"></h2>
+      <p class="msg" id="detailStats"></p>
+      <div id="detailMonthly"></div>
+    </div>
+  </section>
 
-    document.getElementById('startWs').onclick = () => {
-      append('--- WebSocket 进度 ---');
-      const ws = new WebSocket(`ws://${location.host}/ws/progress`);
-      ws.onmessage = e => {
-        const d = JSON.parse(e.data);
-        append(`${d.type === 'done' ? '✅' : '⏳'} ${d.phase_label || ''} ${d.percent ?? ''}`);
-      };
-    };
+  <!-- ============ 视图 3：智能检索 ============ -->
+  <section id="view-search" class="view">
+    <div class="card">
+      <h2>RAG 语义检索（本地向量索引）</h2>
+      <input type="text" id="ragQuery" placeholder="例如：我们哪一年吵架最多？ / 关于项目方案说了什么" />
+      <button id="btnRag">检索</button>
+      <p class="hint">距离越小越相关（0 = 完全匹配）。需先在上方“数据接入”完成导入与索引构建。</p>
+      <div id="ragHits"></div>
+    </div>
+  </section>
+</main>
 
-    document.getElementById('startSse').onclick = () => {
-      append('--- SSE 流式 ---');
-      const q = encodeURIComponent('我们哪一年吵架最多？');
-      const es = new EventSource('/api/chat/stream?question=' + q);
-      es.onmessage = e => {
-        const d = JSON.parse(e.data);
-        if (d.done) { es.close(); append('✅ 完成'); }
-        else append(d.delta);
-      };
-    };
-  </script>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+
+// ---------- 工具 ----------
+async function api(path, opts = {}) {
+  const r = await fetch(path, opts);
+  if (!r.ok) {
+    let detail = r.statusText;
+    try { detail = (await r.json()).detail || detail; } catch (_) {}
+    throw new Error(detail);
+  }
+  return r.json();
+}
+const escapeHtml = (s) => String(s ?? "").replace(/[&<>"']/g,
+  (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const fmtTs = (ts) => ts ? new Date(ts * 1000).toLocaleString("zh-CN", { hour12: false }) : "-";
+
+// WS 进度订阅：TASKS 最新任务推送（后端 /ws/progress 轮询推送）
+function watchProgress(barId, msgId) {
+  const bar = $(barId), msg = $(msgId);
+  const ws = new WebSocket(`ws://${location.host}/ws/progress`);
+  ws.onmessage = (e) => {
+    const d = JSON.parse(e.data);
+    if (bar) bar.style.width = (d.percent ?? 0) + "%";
+    if (msg) {
+      msg.className = "msg" + (d.type === "error" ? " err" : d.type === "done" ? " ok" : "");
+      msg.textContent = d.message || d.phase_label || d.type;
+    }
+  };
+  return ws;
+}
+
+// 文件上传 → 返回本地路径
+async function uploadFile(fileInput, pathInput) {
+  const f = $(fileInput).files[0];
+  if (!f) { alert("请先选择文件"); return; }
+  const fd = new FormData();
+  fd.append("file", f);
+  const res = await api("/api/upload", { method: "POST", body: fd });
+  $(pathInput).value = res.path;
+}
+
+// ---------- 视图切换 ----------
+document.querySelectorAll(".tab").forEach((btn) => {
+  btn.onclick = () => {
+    document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
+    $("view-" + btn.dataset.view).classList.add("active");
+    if (btn.dataset.view === "contacts") loadContacts();
+  };
+});
+
+// ---------- 向导 ----------
+$("btnUpMsg").onclick = () => uploadFile("fMsg", "pMsg");
+$("btnUpContact").onclick = () => uploadFile("fContact", "pContact");
+$("btnUpMembers").onclick = () => uploadFile("fMembers", "pMembers");
+
+$("btnImport").onclick = async () => {
+  const msg = $("importMsg");
+  try {
+    const body = { path: $("pMsg").value.trim() };
+    if (!$("pMsg").value.trim()) { alert("请先选择/填写消息文件"); return; }
+    if ($("pContact").value.trim()) body.contact_path = $("pContact").value.trim();
+    if ($("pMembers").value.trim()) body.members_path = $("pMembers").value.trim();
+    const ws = watchProgress("importBar", "importMsg");
+    const res = await api("/api/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    msg.textContent = `任务已提交：${res.task_id}，等待进度推送…`;
+    // 任务完成后关闭 WS（后端推送 done 后 2s 关闭）
+    setTimeout(() => ws.close(), 3000);
+  } catch (e) { msg.className = "msg err"; msg.textContent = "导入失败：" + e.message; }
+};
+
+$("btnDemo").onclick = async () => {
+  const msg = $("importMsg");
+  try {
+    const r = await api("/api/demo", { method: "POST" });
+    msg.className = "msg ok"; msg.textContent = r.message + "（请点击下方“重建索引”）";
+  } catch (e) { msg.className = "msg err"; msg.textContent = e.message; }
+};
+
+$("btnIndex").onclick = async () => {
+  const msg = $("indexMsg");
+  try {
+    const ws = watchProgress("indexBar", "indexMsg");
+    const res = await api("/api/index", { method: "POST" });
+    msg.textContent = `索引任务已提交：${res.task_id}`;
+    setTimeout(() => ws.close(), 3000);
+  } catch (e) { msg.className = "msg err"; msg.textContent = "索引失败：" + e.message; }
+};
+
+// ---------- 联系人 ----------
+let allContacts = [];
+async function loadContacts() {
+  try {
+    allContacts = (await api("/api/contacts")).items;
+    renderContacts($("contactSearch").value.trim());
+  } catch (e) { $("contactRows").innerHTML = `<tr><td colspan="4">加载失败：${escapeHtml(e.message)}</td></tr>`; }
+}
+function renderContacts(kw) {
+  const rows = allContacts.filter((c) => !kw || (c.display_name || "").includes(kw));
+  $("contactRows").innerHTML = rows.length
+    ? rows.map((c) => `<tr data-wxid="${escapeHtml(c.wxid)}">
+        <td>${escapeHtml(c.display_name)}</td>
+        <td><span class="badge">${escapeHtml(c.type)}</span></td>
+        <td>${c.message_count}</td><td>${fmtTs(c.last_ts)}</td></tr>`).join("")
+    : `<tr><td colspan="4">暂无数据（请先在“数据接入”导入）</td></tr>`;
+  $("contactRows").querySelectorAll("tr[data-wxid]").forEach((tr) => {
+    tr.onclick = () => showDetail(tr.dataset.wxid);
+  });
+}
+$("contactSearch").oninput = (e) => renderContacts(e.target.value.trim());
+
+async function showDetail(wxid) {
+  const card = $("detailCard");
+  card.style.display = "block";
+  const d = await api(`/api/talker/${encodeURIComponent(wxid)}/stats`);
+  const c = allContacts.find((x) => x.wxid === wxid);
+  $("detailTitle").textContent = (c ? c.display_name : wxid) + " 的消息统计";
+  $("detailStats").textContent = `消息总数 ${d.total} · 最近活跃 ${fmtTs(d.last_ts)}`;
+  const max = Math.max(1, ...d.monthly.map((m) => m.count));
+  $("detailMonthly").innerHTML = d.monthly.map((m) =>
+    `<div style="margin:4px 0;font-size:13px">
+      <span style="display:inline-block;width:64px;color:#888">${m.month}</span>
+      <span class="bar" style="height:12px;width:${(m.count / max * 200)}px"></span>
+      <span>${m.count}</span></div>`).join("");
+}
+
+// ---------- 检索 ----------
+$("btnRag").onclick = async () => {
+  const q = $("ragQuery").value.trim();
+  const box = $("ragHits");
+  if (!q) { alert("请输入问题"); return; }
+  box.innerHTML = "检索中…";
+  try {
+    const r = await api(`/api/rag/search?q=${encodeURIComponent(q)}&top_k=10`);
+    box.innerHTML = r.hits.length
+      ? r.hits.map((h) => {
+          const m = h.metadata || {};
+          return `<div class="hit">
+            <div>${escapeHtml(h.content)}</div>
+            <div class="meta">相关度 ${(1 - h.distance).toFixed(2)} · ${escapeHtml(m.talker || "")} · ${escapeHtml(m.year_month || "")}</div>
+          </div>`;
+        }).join("")
+      : `<p class="hint">无结果（请确认已构建索引）</p>`;
+  } catch (e) { box.innerHTML = `<p class="msg err">检索失败：${escapeHtml(e.message)}</p>`; }
+};
+$("ragQuery").addEventListener("keydown", (e) => { if (e.key === "Enter") $("btnRag").click(); });
+</script>
 </body>
 </html>
