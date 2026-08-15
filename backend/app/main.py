@@ -16,19 +16,22 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 import sqlite3
 import threading
 import time
 import traceback
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from backend.app.demo_data import DB_PATH, generate_demo_data
 from backend.app.importer import run_import
+from backend.app.rag_index import build_index, search
 
 app = FastAPI(title="MemoryMirror Engine", version="0.1.0")
 
@@ -150,6 +153,88 @@ def get_task(task_id: str):
     return task
 
 
+@app.post("/api/index")
+async def start_index():
+    """全量重建向量索引（后台线程，进度走 /ws/progress，Week 4）。"""
+    task_id = f"idx_{int(time.time() * 1000)}"
+    with TASKS_LOCK:
+        TASKS[task_id] = {
+            "task_id": task_id, "status": "queued", "phase": "queued",
+            "current": 0, "total": 0, "message": "索引任务已创建，等待执行",
+        }
+
+    def _run():
+        def cb(**kw):
+            with TASKS_LOCK:
+                TASKS[task_id].update(kw)
+
+        try:
+            build_index(progress_cb=cb)
+        except Exception as e:
+            cb(status="error", phase="error", message=f"索引构建失败: {e}")
+            traceback.print_exc()
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"task_id": task_id, "status": "accepted"}
+
+
+@app.get("/api/rag/search")
+def rag_search(q: str = "", top_k: int = 20):
+    """RAG 向量检索（Week 4）：问题 → Top-K 相关片段（含元数据，距离越小越相关）。
+
+    说明：reranker 依赖 bge-reranker ONNX（当前网络无法下载），暂时以向量距离排序，
+    模型可用后在此接入重排（PRD §4.4）。
+    """
+    q = q.strip()
+    if not q:
+        raise HTTPException(status_code=400, detail="q 不能为空")
+    hits = search(q, top_k=max(1, min(top_k, 50)))
+    return {"query": q, "hits": hits}
+
+
+@app.get("/api/debug/embed")
+def debug_embed(q: str = "吃饭了吗"):
+    """调试（Week 4 排障）：查询向量状态 vs 索引中已存储向量的范数，定位检索失效根因。"""
+    import numpy as np
+
+    from backend.app import embedder as emb
+    from backend.app.rag_index import get_collection
+
+    v = emb.embed_texts([q])
+    col = get_collection(DB_PATH, create=False)
+    out = {
+        "query": q,
+        "query_vec_norm": round(float(np.linalg.norm(v)), 3),
+        "fitted": emb._fitted,
+        "vocab_size": len(emb.get_embedder().vocab),
+        "vocab_first5": list(emb.get_embedder().vocab.items())[:5],
+        "query_nonzero_idx": [int(i) for i, x in enumerate(np.ravel(v)) if x > 0][:8],
+    }
+    if col is None:
+        out["note"] = "collection 不存在"
+        return out
+    # A) chroma 原生 query（同一查询向量）
+    r = col.query(query_embeddings=v.tolist(), n_results=3, include=["documents", "distances"])
+    out["chroma_query"] = [
+        {"doc": d, "dist": round(float(x), 4)}
+        for d, x in zip(r["documents"][0], r["distances"][0])
+    ]
+    # B) 手动余弦对照：取前 2000 条存储向量与查询向量逐条 dot（向量均已 L2 归一化）
+    got = col.get(limit=2000, include=["embeddings", "documents"])
+    embs = np.asarray(got.get("embeddings"), dtype=np.float32)
+    docs = got.get("documents") or []
+    if embs.ndim == 2 and len(embs):
+        sims = embs @ np.ravel(v).astype(np.float32)
+        order = np.argsort(-sims)[:3]
+        out["manual_cosine_top3"] = [
+            {"doc": docs[int(i)], "cos": round(float(sims[int(i)]), 4)}
+            for i in order
+        ]
+    else:
+        out["manual_cosine_top3"] = "无向量"
+    return out
+
+
 @app.websocket("/ws/progress")
 async def ws_progress(ws: WebSocket):
     """推送最新导入任务的实时进度（R5）：轮询 TASKS 状态，变化即推送。"""
@@ -215,3 +300,49 @@ async def chat_stream(question: str = "我们哪一年吵架最多？"):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.post("/api/upload")
+async def upload_file(file: UploadFile):
+    """上传导入文件到 data/uploads/，返回可导入的本地路径（向导页用）。"""
+    upload_dir = DB_PATH.parent / "uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    dest = upload_dir / Path(file.filename or "upload.bin").name
+    with open(dest, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+    return {"path": str(dest), "name": file.filename, "size": dest.stat().st_size}
+
+
+@app.get("/api/talker/{wxid}/stats")
+def talker_stats(wxid: str):
+    """单联系人/群统计：总数、最近时间、月度消息量（前端详情/Week 6 曲线数据基础）。"""
+    conn = _db()
+    row = conn.execute("SELECT COUNT(*), MAX(time_utc) FROM messages WHERE talker=?", (wxid,)).fetchone()
+    monthly = conn.execute(
+        "SELECT year_month, COUNT(*) FROM messages WHERE talker=? GROUP BY year_month ORDER BY year_month",
+        (wxid,),
+    ).fetchall()
+    conn.close()
+    return {
+        "wxid": wxid,
+        "total": row[0],
+        "last_ts": row[1],
+        "monthly": [{"month": m, "count": c} for m, c in monthly],
+    }
+
+
+@app.post("/api/demo")
+def make_demo():
+    """重新生成演示数据集（向导"演示数据集"入口）。"""
+    from backend.app.demo_data import generate_demo_data
+
+    generate_demo_data()
+    return {"status": "ok", "message": "演示数据集已重新生成"}
+
+
+# 静态 UI 挂载必须在所有 API 路由之后（保证 /api/* 优先匹配）
+app.mount(
+    "/",
+    StaticFiles(directory=str(Path(__file__).resolve().parents[2] / "ui"), html=True),
+    name="ui",
+)
