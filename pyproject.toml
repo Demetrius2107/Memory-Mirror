@@ -9,7 +9,10 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "diskcache>=5.6",
+    "jieba>=0.42",          # Week 4：中文分词（embedder 依赖）
+    "python-multipart>=0.0.9",  # FastAPI 文件上传（/api/upload）依赖
 ]
 
 [project.optional-dependencies]
-rag = ["chromadb>=0.5", "onnxruntime>=1.18"]  # Week 4：向量检索（bge-small-zh ONNX int8）
+rag = ["chromadb>=0.5", "onnxruntime>=1.18", "tokenizers>=0.19"]  # Week 4：向量检索（bge ONNX 就绪后启用）
+dev = ["httpx>=0.27"]  # FastAPI TestClient 依赖
