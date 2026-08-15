@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>记忆镜像 MemoryMirror</title>
+  <style>
+    body { font-family: system-ui, "Microsoft YaHei", sans-serif; max-width: 640px; margin: 40px auto; padding: 0 16px; }
+    h1 small { font-size: 13px; color: #888; }
+    .card { border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin: 12px 0; }
+    button { padding: 8px 16px; margin-right: 8px; border: none; border-radius: 6px; background: #1677ff; color: #fff; cursor: pointer; }
+    #log { white-space: pre-wrap; background: #f6f6f6; border-radius: 6px; padding: 12px; font-size: 13px; height: 200px; overflow: auto; }
+  </style>
+</head>
+<body>
+  <h1>记忆镜像 MemoryMirror <small>Week 1 骨架（Tauri 壳 + FastAPI 引擎）</small></h1>
+  <div class="card" id="stats">加载中…</div>
+  <div class="card">
+    <button id="startWs">模拟导入进度（WebSocket）</button>
+    <button id="startSse">模拟 AI 问答（SSE）</button>
+  </div>
+  <div class="card"><div id="log"></div></div>
+
+  <script>
+    const log = document.getElementById('log');
+    function append(s) { log.textContent += s + '\n'; log.scrollTop = log.scrollHeight; }
+
+    fetch('/api/stats').then(r => r.json()).then(d => {
+      document.getElementById('stats').textContent =
+        `演示数据集：${d.total_messages} 条消息 / ${d.friends} 好友 / ${d.groups} 群`;
+    }).catch(e => append('❌ 引擎未就绪: ' + e));
+
+    document.getElementById('startWs').onclick = () => {
+      append('--- WebSocket 进度 ---');
+      const ws = new WebSocket(`ws://${location.host}/ws/progress`);
+      ws.onmessage = e => {
+        const d = JSON.parse(e.data);
+        append(`${d.type === 'done' ? '✅' : '⏳'} ${d.phase_label || ''} ${d.percent ?? ''}`);
+      };
+    };
+
+    document.getElementById('startSse').onclick = () => {
+      append('--- SSE 流式 ---');
+      const q = encodeURIComponent('我们哪一年吵架最多？');
+      const es = new EventSource('/api/chat/stream?question=' + q);
+      es.onmessage = e => {
+        const d = JSON.parse(e.data);
+        if (d.done) { es.close(); append('✅ 完成'); }
+        else append(d.delta);
+      };
+    };
+  </script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "默认能力：主窗口加载本地引擎页面",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

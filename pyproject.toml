@@ -1,0 +1,15 @@
+[project]
+name = "memorymirror"
+version = "0.1.0"
+description = "记忆镜像 MemoryMirror — 本地隐私优先的社交关系体检工具（后端引擎）"
+# R10 原意锁 3.11/3.12；本机仅 3.13（+3.10-32bit），Week 1 依赖（fastapi/uvicorn/diskcache）
+# 均支持 3.13。ChromaDB/ONNX（Week 4）需在 3.13 上验证，不兼容则安装 3.12 重建 venv。
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "diskcache>=5.6",
+]
+
+[project.optional-dependencies]
+rag = ["chromadb>=0.5", "onnxruntime>=1.18"]  # Week 4：向量检索（bge-small-zh ONNX int8）

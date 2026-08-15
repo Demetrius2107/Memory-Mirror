@@ -1,0 +1,11 @@
+[package]
+name = "memorymirror-shell"
+version = "0.1.0"
+description = "记忆镜像 MemoryMirror — Tauri 2 桌面壳（Sidecar 管理 Python 引擎）"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
