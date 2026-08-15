@@ -7,11 +7,12 @@ dist/
 build/
 *.egg-info/
 
-# ---- 运行时数据（演示库由脚本生成，不入库） ----
+# ---- 运行时数据（演示库/引擎日志由脚本生成，不入库） ----
 data/*.db
 data/*.db-*
 data/*.wal
 data/*.shm
+data/*.log
 
 # ---- Rust / Tauri ----
 src-tauri/target/
