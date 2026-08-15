@@ -1,0 +1,4 @@
+﻿wxid,nickname,remark,type
+wxid_demo_a,DemoA,演示A,friend
+wxid_demo_b,DemoB,演示B,friend
+chatroom_grp_demo,演示群,演示群,group

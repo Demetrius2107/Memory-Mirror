@@ -1,11 +1,12 @@
-"""记忆镜像 MemoryMirror — 后端引擎（FastAPI）Week 1 骨架
+"""记忆镜像 MemoryMirror — 后端引擎（FastAPI）
 
 接口：
 - GET  /health             健康检查
 - GET  /api/contacts       联系人/群列表（R17 选择面板数据源）
 - GET  /api/stats          消息总量等统计
-- POST /api/import         导入任务占位（异步 task_id）
-- WS   /ws/progress        处理进度推送（WebSocket，R5）
+- POST /api/import         导入任务（Week 2：格式探测+清洗+UPSERT 入库，异步 task_id）
+- GET  /api/tasks/{id}     导入任务状态查询
+- WS   /ws/progress        处理进度推送（WebSocket，R5，轮询 TASKS 实时状态）
 - GET  /api/chat/stream    AI 问答流式输出（SSE，R5）
 
 启动：uvicorn backend.app.main:app --host 127.0.0.1 --port 8787
@@ -15,14 +16,19 @@ from __future__ import annotations
 
 import asyncio
 import json
-import random
 import sqlite3
+import threading
+import time
+import traceback
+from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from backend.app.demo_data import DB_PATH, generate_demo_data
+from backend.app.importer import run_import
 
 app = FastAPI(title="MemoryMirror Engine", version="0.1.0")
 
@@ -39,6 +45,17 @@ def _db() -> sqlite3.Connection:
     if not DB_PATH.exists():
         generate_demo_data()
     return sqlite3.connect(DB_PATH)
+
+
+# ---------------- 导入任务状态（真实进度，R5 走 WebSocket 推送） ----------------
+TASKS: dict[str, dict] = {}
+TASKS_LOCK = threading.Lock()
+
+
+class ImportRequest(BaseModel):
+    path: str                         # 消息文件（CSV/JSONL）
+    contact_path: str | None = None   # 联系人/群文件（R17 配对导入）
+    members_path: str | None = None   # 群成员文件
 
 
 @app.get("/health")
@@ -89,41 +106,88 @@ def stats():
 
 
 @app.post("/api/import")
-async def start_import():
-    """导入任务占位：返回 task_id，真实进度经 /ws/progress 推送（Week 2-3 实现）。"""
-    task_id = f"imp_{random.randint(100000, 999999)}"
-    return {"task_id": task_id, "status": "accepted", "note": "Week 2-3 实现真实导入"}
+async def start_import(req: ImportRequest):
+    """启动真实导入任务（后台线程）：格式探测 → 清洗 → UPSERT 入库（Week 2）。"""
+    src = Path(req.path)
+    if not src.is_file():
+        raise HTTPException(status_code=400, detail=f"消息文件不存在: {req.path}")
+    for p in (req.contact_path, req.members_path):
+        if p and not Path(p).is_file():
+            raise HTTPException(status_code=400, detail=f"辅助文件不存在: {p}")
+
+    task_id = f"imp_{int(time.time() * 1000)}"
+    with TASKS_LOCK:
+        TASKS[task_id] = {
+            "task_id": task_id, "status": "queued", "phase": "queued",
+            "current": 0, "total": 0, "message": "任务已创建，等待执行",
+        }
+
+    def _run():
+        def cb(**kw):
+            with TASKS_LOCK:
+                TASKS[task_id].update(kw)
+
+        try:
+            run_import(
+                task_id, src,
+                contact_path=req.contact_path, members_path=req.members_path,
+                progress_cb=cb,
+            )
+        except Exception as e:  # 记录错误，避免后台线程静默死亡
+            cb(status="error", phase="error", message=f"导入失败: {e}")
+            traceback.print_exc()
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"task_id": task_id, "status": "accepted"}
+
+
+@app.get("/api/tasks/{task_id}")
+def get_task(task_id: str):
+    with TASKS_LOCK:
+        task = TASKS.get(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+    return task
 
 
 @app.websocket("/ws/progress")
 async def ws_progress(ws: WebSocket):
-    """模拟导入进度推送：phase/current/total，完成后发 done（R5：进度走 WebSocket）。"""
+    """推送最新导入任务的实时进度（R5）：轮询 TASKS 状态，变化即推送。"""
     await ws.accept()
+    last_sig = None
     try:
-        phases = [
-            ("parsing", "正在解析导入文件", 100),
-            ("cleaning", "正在清洗数据", 100),
-            ("vectorizing", "正在生成向量索引", 100),
-        ]
-        for name, label, total in phases:
-            for i in range(0, total + 1, 10):
-                await ws.send_text(
-                    json.dumps(
-                        {
-                            "type": "progress",
-                            "phase": name,
-                            "phase_label": label,
-                            "current": i,
-                            "total": total,
-                            "percent": i,
-                        },
-                        ensure_ascii=False,
+        while True:
+            with TASKS_LOCK:
+                task = TASKS[max(TASKS.keys())] if TASKS else None
+            if task is not None:
+                sig = (task["status"], task.get("phase"), task.get("current"), task.get("total"), task.get("message"))
+                if sig != last_sig:
+                    last_sig = sig
+                    total = task.get("total", 0)
+                    current = task.get("current", 0)
+                    if task["status"] == "done":
+                        evt_type = "done"
+                    elif task["status"] == "error":
+                        evt_type = "error"
+                    else:
+                        evt_type = "progress"
+                    await ws.send_text(
+                        json.dumps(
+                            {
+                                "type": evt_type,
+                                "task_id": task["task_id"],
+                                "status": task["status"],
+                                "phase": task.get("phase"),
+                                "phase_label": task.get("message", ""),
+                                "current": current,
+                                "total": total,
+                                "percent": int(current / total * 100) if total else 0,
+                                "message": task.get("message", ""),
+                            },
+                            ensure_ascii=False,
+                        )
                     )
-                )
-                await asyncio.sleep(0.05)
-        await ws.send_text(
-            json.dumps({"type": "done", "message": "分析完成，共 20,000 条消息"}, ensure_ascii=False)
-        )
+            await asyncio.sleep(0.3)
     except WebSocketDisconnect:
         pass
     finally:
