@@ -49,7 +49,7 @@ def decrypt_db_v4(passphrase_hex: str, in_path: str, out_path: str) -> bool:
         if not hmac.compare_digest(h1.digest(), page1[PAGE_SIZE - HMAC_SZ : PAGE_SIZE]):
             return False
 
-        # 逐页解密写出
+        # 逐页解密写出（每页 4096 字节：解密数据 + reserve 80 字节，缺了页边界会错位）
         f_in.seek(SALT_SIZE)
         f_out.write(b"SQLite format 3\x00")
         cur = 0
@@ -62,6 +62,7 @@ def decrypt_db_v4(passphrase_hex: str, in_path: str, out_path: str) -> bool:
             cipher = AES.new(key, AES.MODE_CBC, iv)
             dec = cipher.decrypt(page[offset : PAGE_SIZE - RESERVE])
             f_out.write(dec)
+            f_out.write(b"\x00" * RESERVE)  # reserve 区（明文视角全零，对应 MemoTrace 的 page[end-reserve:end]）
             cur += 1
     return True
 

@@ -20,6 +20,7 @@ import hashlib
 import json
 import re
 import sqlite3
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -112,7 +113,14 @@ def _pick(row: dict, aliases: list[str]):
 
 
 def _read_csv_rows(path: Path):
-    """读取 CSV（utf-8-sig），键统一小写。"""
+    """读取 CSV（utf-8-sig），键统一小写。
+
+    提升 csv 字段上限：微信超长消息（XML 嵌入/长转发）单字段可能超过默认 128KB。
+    """
+    try:
+        csv.field_size_limit(sys.maxsize)
+    except OverflowError:
+        csv.field_size_limit(2**31 - 1)
     with open(path, "r", encoding="utf-8-sig", errors="replace", newline="") as f:
         reader = csv.DictReader(f)
         if reader.fieldnames is None:

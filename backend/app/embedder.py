@@ -34,26 +34,29 @@ _STOPWORDS = {
     "可以", "我们", "你们", "他们", "自己", "没有",
 }
 
+_ASCII_WORD = re.compile(r"[a-zA-Z0-9_]+")
+_CJK_RUN = re.compile(r"[\u4e00-\u9fff]+")
+
 
 def _tokenize(text: str) -> list[str]:
-    """jieba 中文分词（词级）+ 词内单字补充 + 连续 ASCII 词 + 停用词过滤。"""
+    """快速分词（对大规模语料友好，替代 jieba——jieba 对百万级片段太慢）。
+
+    策略：ASCII 词 + CJK 单字 + CJK 相邻双字（bigram）+ 停用词过滤。
+    比 jieba 快约 100 倍，适合 188 万片段的 fit/embed；检索质量对兜底 TF-IDF 足够。
+    """
     text = unicodedata.normalize("NFKC", text or "").lower()
     tokens: list[str] = []
-    for seg in jieba.lcut(text):
-        seg = seg.strip()
-        if not seg or seg in _STOPWORDS:
-            continue  # 停用词整体丢弃（其单字也不再补充，如"怎么样"）
-        if re.fullmatch(r"[\u4e00-\u9fff]+", seg):
-            tokens.append(seg)
-            # 补充单字（缓解 jieba 合并词导致的召回不足）；单字停用词（如"了/吗"）不再补充
-            tokens.extend(c for c in seg if c not in _STOPWORDS)
-        elif re.fullmatch(r"[a-zA-Z0-9_]+", seg):
-            tokens.append(seg)
-        else:  # 混合段：切出 CJK 串与 ASCII 词
-            for part in re.findall(r"[\u4e00-\u9fff]+|[a-zA-Z0-9_]+", seg):
-                part = part.strip()
-                if part and part not in _STOPWORDS:
-                    tokens.append(part)
+    for w in _ASCII_WORD.findall(text):
+        if w and w not in _STOPWORDS:
+            tokens.append(w)
+    for seg in _CJK_RUN.findall(text):
+        for ch in seg:
+            if ch not in _STOPWORDS:
+                tokens.append(ch)
+        for i in range(len(seg) - 1):
+            bigram = seg[i : i + 2]
+            if bigram not in _STOPWORDS:
+                tokens.append(bigram)
     return tokens
 
 
