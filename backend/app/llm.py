@@ -45,24 +45,34 @@ def has_key() -> bool:
     return bool(load_config().get("api_key"))
 
 
-def build_rag_prompt(question: str, hits: list[dict], max_chars: int = 3000, scope_label: str = "全部数据") -> list[dict]:
-    """RAG：检索片段组装为 system 上下文 + user 问题（PRD §4.5 Token 控制）。
+def build_rag_prompt(question: str, hits: list[dict], max_chars: int = 3000, scope_label: str = "全部数据", emotion_summary: str | None = None) -> list[dict]:
+    """RAG：检索片段 + 情感统计组装为 system 上下文（PRD §4.5 Token 控制）。
 
-    scope_label：本次分析范围（全部 / 某联系人 / 某群），注入 system 提示，
-    引导模型仅基于该范围片段作答。
+    scope_label：本次分析范围（全部 / 某联系人 / 某群）。
+    emotion_summary：可选的情感统计摘要（均值/趋势/分布），注入后 LLM 可感知
+    情绪全貌，避免仅凭零散片段得出片面结论。
     """
     parts = []
     for i, h in enumerate(hits, 1):
         m = h.get("metadata") or {}
-        parts.append(f"[{i}] ({m.get('year_month', '?')} {m.get('talker', '?')}) {h.get('content', '')}")
+        score = m.get("emotion_score", "")
+        score_tag = f" [情感:{score:+.2f}]" if isinstance(score, (int, float)) else ""
+        parts.append(f"[{i}] ({m.get('year_month', '?')} {m.get('talker', '?')}){score_tag} {h.get('content', '')}")
     context = "\n".join(parts)[:max_chars]
-    system = (
-        "你是「记忆镜像」，基于用户本地微信聊天记录回答关于其社交关系、回忆与情绪的"
-        f"问题。本次分析范围：{scope_label}。以下是从聊天记录检索到的相关片段，"
-        "请仅基于片段回答，引用时注明片段编号；片段不足时明确说明。\n\n检索片段：\n" + context
-    )
+
+    system_parts = [
+        "你是「记忆镜像」，基于用户本地微信聊天记录回答关于其社交关系、回忆与情绪的",
+        f"问题。本次分析范围：{scope_label}。",
+    ]
+    if emotion_summary:
+        system_parts.append(f"\n【情感统计】\n{emotion_summary}\n")
+    system_parts.extend([
+        "以下是从聊天记录检索到的相关片段（含情感分数，+为正/-为负）：",
+        context,
+        "\n请基于检索片段和情感统计回答。引用时注明片段编号；片段不足时明确说明。",
+    ])
     return [
-        {"role": "system", "content": system},
+        {"role": "system", "content": "\n".join(system_parts)},
         {"role": "user", "content": question},
     ]
 

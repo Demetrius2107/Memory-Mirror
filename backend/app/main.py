@@ -305,6 +305,73 @@ def _scope_label(scope_talker: str | None) -> str:
     return f"「{scope_talker}」"
 
 
+def _build_emotion_summary(scope_talker: str | None) -> str | None:
+    """构建情感统计摘要，供 LLM 理解情绪全貌。
+
+    返回格式化的文本块，包含：
+    - 总消息量、情感均值、正/负/中性分布
+    - 最近6个月的情绪趋势
+    - 极端情绪片段（最强正向/负向）
+    """
+    try:
+        conn = _db()
+        where = "WHERE talker=?" if scope_talker else ""
+        params = (scope_talker,) if scope_talker else ()
+
+        # 总体统计
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM messages {where}", params
+        ).fetchone()[0]
+        if total == 0:
+            conn.close()
+            return None
+
+        avg = conn.execute(
+            f"SELECT ROUND(AVG(emotion_score), 3) FROM messages {where}", params
+        ).fetchone()[0]
+
+        pos = conn.execute(
+            f"SELECT COUNT(*) FROM messages {where} AND emotion_score > 0.1", params
+        ).fetchone()[0]
+        neg = conn.execute(
+            f"SELECT COUNT(*) FROM messages {where} AND emotion_score < -0.1", params
+        ).fetchone()[0]
+        neu = total - pos - neg
+
+        # 最近6个月趋势
+        trend_rows = conn.execute(
+            f"SELECT year_month, COUNT(*), ROUND(AVG(emotion_score), 3) "
+            f"FROM messages {where} AND year_month >= ? "
+            f"GROUP BY year_month ORDER BY year_month",
+            params + ("2026-03",) if scope_talker else ("2026-03",),
+        ).fetchall()
+        trend_lines = []
+        for m, c, e in trend_rows:
+            bar = "😊" * max(1, int(e * 10)) if e and e > 0 else "😢" * max(1, int(abs(e) * 10)) if e else "😐"
+            trend_lines.append(f"  {m}: {c}条, 平均{e or 0:.3f}")
+
+        # 极端情绪样例
+        extremes = conn.execute(
+            f"SELECT content, emotion_score FROM messages {where} AND emotion_score IS NOT NULL "
+            f"ORDER BY ABS(emotion_score) DESC LIMIT 3", params
+        ).fetchall()
+        extreme_lines = [f"  「{r[0]}」({r[1]:+.2f})" for r in extremes]
+
+        conn.close()
+
+        lines = [
+            f"共 {total} 条消息，情感均值 {avg if avg else 0:.3f}（+为正/-为负）。",
+            f"正向 {pos} 条 ({pos*100//max(total,1)}%) / 负向 {neg} 条 ({neg*100//max(total,1)}%) / 中性 {neu} 条 ({neu*100//max(total,1)}%)",
+        ]
+        if trend_lines:
+            lines.append(f"最近趋势：\n" + "\n".join(trend_lines))
+        if extreme_lines:
+            lines.append("极端情绪片段：\n" + "\n".join(extreme_lines))
+        return "\n".join(lines)
+    except Exception:
+        return None
+
+
 @app.get("/api/chat/stream")
 async def chat_stream(question: str = "我们哪一年吵架最多？", scope_talker: str | None = None):
     """AI 问答流式输出（SSE，R5 / Week 5）：RAG 检索 → Prompt 组装 → LLM 流式；
@@ -312,7 +379,15 @@ async def chat_stream(question: str = "我们哪一年吵架最多？", scope_ta
     未配置 Key 或调用失败时降级为模拟回答（附检索片段预览，保持可用）。"""
 
     hits = search(question, top_k=8, scope_talker=scope_talker)
-    messages = build_rag_prompt(question, hits, scope_label=_scope_label(scope_talker))
+
+    # 构建情感统计摘要（注入 LLM 上下文，提升回答质量）
+    emotion_summary = _build_emotion_summary(scope_talker)
+
+    messages = build_rag_prompt(
+        question, hits,
+        scope_label=_scope_label(scope_talker),
+        emotion_summary=emotion_summary,
+    )
     llm_on = has_key()
 
     async def event_gen():
