@@ -47,6 +47,8 @@
     <button class="tab" data-view="contacts">联系人</button>
     <button class="tab" data-view="search">智能检索</button>
     <button class="tab" data-view="dashboard">仪表盘</button>
+    <button class="tab" data-view="chat">AI问答</button>
+    <button class="tab" data-view="settings">⚙设置</button>
   </nav>
 </header>
 
@@ -138,6 +140,47 @@
     <div class="card"><h2>情绪趋势（月度情感均值，蓝=正向趋势）</h2><div id="chartEmoMonth" style="height:200px"></div></div>
     <div class="card"><h2>词云（高频词）</h2><div id="chartWords" style="min-height:160px"></div></div>
   </section>
+  <!-- ============ 视图 5：AI 问答 ============ -->
+  <section id="view-chat" class="view">
+    <div class="card">
+      <h2>AI 问答（基于本地聊天记录）</h2>
+      <div id="chatStatus" class="msg" style="margin-bottom:8px">（检测 API 配置中…）</div>
+      <select id="chatScope" style="width:100%;padding:8px;border:1px solid #d0d5dd;border-radius:6px;font-size:14px;margin-bottom:8px"></select>
+      <div id="chatHistory" style="height:360px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:8px;padding:12px;background:#fafbfc;margin-bottom:8px"></div>
+      <div style="display:flex;gap:8px">
+        <input id="chatInput" type="text" placeholder="问点什么，按 Enter 发送（例如：我和小李最近关系怎么样？）" style="flex:1;padding:10px;border:1px solid #d0d5dd;border-radius:6px;font-size:14px">
+        <button id="btnChatSend" class="primary">发送</button>
+      </div>
+      <p class="hint">数据在本地检索后发给 LLM，支持流式输出。未配置 API Key 时显示本地检索片段。</p>
+    </div>
+  </section>
+  <!-- ============ 视图 6：设置 ============ -->
+  <section id="view-settings" class="view">
+    <div class="card">
+      <h2>API 配置（OpenAI 兼容格式）</h2>
+      <p class="hint">支持 DeepSeek / GPT / GLM / Qwen / Moonshot 等兼容 OpenAI 接口的模型服务。</p>
+      <label>预设模型</label>
+      <select id="cfgPreset" style="width:100%;padding:8px;border:1px solid #d0d5dd;border-radius:6px;font-size:14px;margin-bottom:8px">
+        <option value="deepseek">DeepSeek（默认）</option>
+        <option value="gpt">OpenAI GPT</option>
+        <option value="glm">智谱 GLM</option>
+        <option value="qwen">通义千问</option>
+        <option value="moonshot">Moonshot</option>
+        <option value="custom">自定义</option>
+      </select>
+      <label>API Key</label>
+      <input id="cfgApiKey" type="password" placeholder="sk-... 或等效 Key" style="width:100%;padding:8px;border:1px solid #d0d5dd;border-radius:6px;font-size:14px;margin-bottom:8px">
+      <label>Base URL</label>
+      <input id="cfgBaseUrl" type="text" placeholder="https://api.deepseek.com/v1" style="width:100%;padding:8px;border:1px solid #d0d5dd;border-radius:6px;font-size:14px;margin-bottom:8px">
+      <label>Model</label>
+      <input id="cfgModel" type="text" placeholder="deepseek-chat" style="width:100%;padding:8px;border:1px solid #d0d5dd;border-radius:6px;font-size:14px;margin-bottom:8px">
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button id="btnCfgSave" class="primary">保存配置</button>
+        <button id="btnCfgTest">测试连接</button>
+      </div>
+      <div id="cfgMsg" class="msg" style="margin-top:8px"></div>
+    </div>
+  </section>
 </main>
 
 <script src="vendor/echarts.min.js"></script>
@@ -194,6 +237,8 @@ document.querySelectorAll(".tab").forEach((btn) => {
     if (btn.dataset.view === "contacts") loadContacts();
     if (btn.dataset.view === "dashboard") loadDashTalkers();
     if (btn.dataset.view === "search") fillScopes();
+    if (btn.dataset.view === "chat") { fillChatScopes(); loadChatStatus(); }
+    if (btn.dataset.view === "settings") loadConfigForm();
   };
 });
 
@@ -455,6 +500,194 @@ async function loadDashTalkers() {
   } catch (e) { /* 无数据时静默 */ }
 }
 $("btnDashLoad").onclick = loadDashboard;
+
+// ---------- AI 问答（SSE 流式） ----------
+const PRESETS = {
+  deepseek: { baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat" },
+  gpt: { baseUrl: "https://api.openai.com/v1", model: "gpt-4o-mini" },
+  glm: { baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4-flash" },
+  qwen: { baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-turbo" },
+  moonshot: { baseUrl: "https://api.moonshot.cn/v1", model: "moonshot-v1-8k" },
+  custom: { baseUrl: "", model: "" },
+};
+
+async function loadConfigForm() {
+  try {
+    const cfg = await api("/api/config");
+    // Key 混淆后只展示状态，不填充密码框
+    $("cfgApiKey").value = cfg.has_key ? "(已配置，保存新 Key 可覆盖)" : "";
+    $("cfgBaseUrl").value = cfg.base_url || "";
+    $("cfgModel").value = cfg.model || "";
+    // 匹配预设
+    let matched = "custom";
+    for (const [k, v] of Object.entries(PRESETS)) {
+      if (v.baseUrl && v.baseUrl === cfg.base_url && v.model === cfg.model) { matched = k; break; }
+    }
+    $("cfgPreset").value = matched;
+  } catch (e) { /* 无配置时忽略 */ }
+}
+
+$("cfgPreset").onchange = (e) => {
+  const p = PRESETS[e.target.value];
+  if (p && p.baseUrl) {
+    $("cfgBaseUrl").value = p.baseUrl;
+    $("cfgModel").value = p.model;
+  }
+};
+
+$("btnCfgSave").onclick = async () => {
+  const msg = $("cfgMsg");
+  msg.className = "msg";
+  msg.textContent = "保存中…";
+  try {
+    await api("/api/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        api_key: $("cfgApiKey").value.trim() || null,
+        base_url: $("cfgBaseUrl").value.trim() || null,
+        model: $("cfgModel").value.trim() || null,
+      }),
+    });
+    msg.className = "msg ok";
+    msg.textContent = "✓ 配置已保存";
+  } catch (e) {
+    msg.className = "msg err";
+    msg.textContent = "保存失败: " + e.message;
+  }
+};
+
+$("btnCfgTest").onclick = async () => {
+  const msg = $("cfgMsg");
+  msg.className = "msg";
+  msg.textContent = "测试连接中…";
+  // 先保存
+  await $("btnCfgSave").click();
+  // 发一条测试问答
+  try {
+    const res = await fetch("/api/chat/stream?question=ping", {
+      headers: { "Accept": "text/event-stream" },
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "", got = false;
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop();
+      for (const ln of lines) {
+        if (ln.startsWith("data: ")) {
+          try { const j = JSON.parse(ln.slice(6)); if (j.delta) got = true; } catch (_) {}
+        }
+      }
+      if (got) break;
+    }
+    reader.cancel();
+    msg.className = "msg ok";
+    msg.textContent = got ? "✓ 连接成功，API 可用" : "连接成功但无输出";
+  } catch (e) {
+    msg.className = "msg err";
+    msg.textContent = "连接失败: " + e.message;
+  }
+};
+
+async function loadChatStatus() {
+  const el = $("chatStatus");
+  try {
+    const cfg = await api("/api/config");
+    if (cfg.has_key) {
+      el.className = "msg ok";
+      el.textContent = `✓ 已配置 ${cfg.model || "model"}（${cfg.base_url || "default"}）`;
+    } else {
+      el.className = "msg";
+      el.textContent = "未配置 API Key，仅显示本地检索片段。请前往「⚙设置」配置。";
+    }
+  } catch (e) {
+    el.textContent = "配置检测失败: " + e.message;
+  }
+}
+
+async function fillChatScopes() {
+  const sel = $("chatScope");
+  if (sel.dataset.filled) return;
+  try {
+    const d = await api("/api/contacts");
+    const opts = ['<option value="">全部数据</option>'];
+    (d.items || []).forEach((c) => {
+      opts.push(`<option value="${escapeHtml(c.wxid)}">${escapeHtml(c.display_name)}（${c.type}）</option>`);
+    });
+    sel.innerHTML = opts.join("");
+    sel.dataset.filled = "1";
+  } catch (e) { /* 无数据时仅保留全部 */ }
+}
+
+let chatAbort = null;
+function appendChat(role, text) {
+  const box = $("chatHistory");
+  const div = document.createElement("div");
+  div.style.marginBottom = "8px";
+  div.style.padding = "8px 12px";
+  div.style.borderRadius = "8px";
+  div.style.background = role === "user" ? "#eef2ff" : "#f1f5f9";
+  div.style[role === "user" ? "marginLeft" : "marginRight"] = "10%";
+  div.innerHTML = `<strong>${role === "user" ? "你" : "AI"}</strong><pre style="margin:4px 0 0;white-space:pre-wrap;font-family:inherit">${escapeHtml(text)}</pre>`;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+  return div;
+}
+
+async function sendChat() {
+  const input = $("chatInput");
+  const q = input.value.trim();
+  if (!q) return;
+  input.value = "";
+  appendChat("user", q);
+  const aiBubble = appendChat("ai", "");
+  const pre = aiBubble.querySelector("pre");
+
+  if (chatAbort) chatAbort.abort();
+  chatAbort = new AbortController();
+
+  const scope = $("chatScope").value;
+  const url = "/api/chat/stream?question=" + encodeURIComponent(q) + (scope ? "&scope_talker=" + encodeURIComponent(scope) : "");
+  try {
+    const res = await fetch(url, { signal: chatAbort.signal, headers: { "Accept": "text/event-stream" } });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "", full = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop();
+      for (const ln of lines) {
+        if (ln.startsWith("data: ")) {
+          try {
+            const j = JSON.parse(ln.slice(6));
+            if (j.delta) { full += j.delta; pre.textContent = full; }
+            if (j.done) { reader.cancel(); }
+          } catch (_) {}
+        }
+      }
+    }
+  } catch (e) {
+    if (e.name !== "AbortError") {
+      pre.textContent += "\n[错误: " + e.message + "]";
+    }
+  }
+  $("chatHistory").scrollTop = $("chatHistory").scrollHeight;
+}
+
+$("btnChatSend").onclick = sendChat;
+$("chatInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
+});
+
 window.addEventListener("resize", () => Object.values(dashCharts).forEach((c) => c.resize()));
 </script>
 </body>

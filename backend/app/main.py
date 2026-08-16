@@ -458,6 +458,12 @@ class AnalyzeRequest(BaseModel):
     top_k: int = 8
 
 
+class ConfigRequest(BaseModel):
+    api_key: str | None = None
+    base_url: str | None = None
+    model: str | None = None
+
+
 @app.post("/api/analyze")
 async def start_analyze(req: AnalyzeRequest):
     """分析任务（范围可选 + 可并行）：对解密数据区（demo.db）按范围聚合统计，
@@ -602,9 +608,11 @@ def make_demo():
 
 @app.get("/api/config")
 def get_config():
-    """读取 LLM 配置（Key 不返回明文，仅返回是否已配置）。"""
+    """读取 LLM 配置（Key 混淆返回，前端可显示是否已配置）。"""
     cfg = load_config()
-    return {"base_url": cfg["base_url"], "model": cfg["model"], "has_key": has_key()}
+    key = cfg.get("api_key", "")
+    masked = key[:8] + "****" + key[-4:] if len(key) > 12 else "" if not key else "已配置"
+    return {"api_key": masked, "base_url": cfg["base_url"], "model": cfg["model"], "has_key": has_key()}
 
 
 @app.post("/api/config")
