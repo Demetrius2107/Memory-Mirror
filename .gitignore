@@ -13,12 +13,18 @@ data/*.db-*
 data/*.wal
 data/*.shm
 data/*.log
+data/*.json
+data/*.txt
 data/uploads/
 data/chroma/
 
 # ---- Rust / Tauri ----
 src-tauri/target/
 src-tauri/gen/
+
+# ---- 第三方工具源码（MemoTrace 等，仅调研用，不入库） ----
+tools/memotrace_src/
+tools/*.zip
 
 # ---- Node ----
 node_modules/
