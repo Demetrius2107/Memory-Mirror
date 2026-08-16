@@ -31,6 +31,7 @@ from pydantic import BaseModel
 
 from backend.app.demo_data import DB_PATH, generate_demo_data
 from backend.app.importer import run_import
+from backend.app.llm import build_rag_prompt, has_key, load_config, save_config, stream_chat
 from backend.app.rag_index import build_index, search
 
 app = FastAPI(title="MemoryMirror Engine", version="0.1.0")
@@ -59,6 +60,12 @@ class ImportRequest(BaseModel):
     path: str                         # 消息文件（CSV/JSONL）
     contact_path: str | None = None   # 联系人/群文件（R17 配对导入）
     members_path: str | None = None   # 群成员文件
+
+
+class ConfigRequest(BaseModel):
+    api_key: str | None = None        # 空字符串 = 清空
+    base_url: str | None = None
+    model: str | None = None
 
 
 @app.get("/health")
@@ -281,18 +288,55 @@ async def ws_progress(ws: WebSocket):
 
 @app.get("/api/chat/stream")
 async def chat_stream(question: str = "我们哪一年吵架最多？"):
-    """AI 问答流式输出（SSE，R5）。Week 5 接入真实 RAG + LLM，当前为模拟打字机。"""
+    """AI 问答流式输出（SSE，R5 / Week 5）：RAG 检索 → Prompt 组装 → LLM 流式；
+    未配置 Key 或调用失败时降级为模拟回答（附检索片段预览，保持可用）。"""
+
+    hits = search(question, top_k=8)
+    messages = build_rag_prompt(question, hits)
+    llm_on = has_key()
 
     async def event_gen():
         yield (
             "data: "
-            + json.dumps({"delta": "（SSE 流式通道已打通）", "done": False}, ensure_ascii=False)
+            + json.dumps(
+                {"delta": f"（已检索 {len(hits)} 条相关片段）\n", "done": False},
+                ensure_ascii=False,
+            )
             + "\n\n"
         )
-        answer = f"关于「{question}」，检索到相关片段后我会逐字返回答案。当前为 Week 1 模拟响应。"
-        for ch in answer:
-            yield "data: " + json.dumps({"delta": ch, "done": False}, ensure_ascii=False) + "\n\n"
-            await asyncio.sleep(0.01)
+        if llm_on:
+            q: asyncio.Queue = asyncio.Queue()
+
+            def feed(delta: str):
+                q.put_nowait(delta)
+
+            def run():
+                try:
+                    stream_chat(messages, feed)
+                except Exception as e:
+                    q.put_nowait(f"\n\n[LLM 调用失败: {e}]")
+                finally:
+                    q.put_nowait(None)
+
+            asyncio.get_running_loop().run_in_executor(None, run)
+            while True:
+                d = await q.get()
+                if d is None:
+                    break
+                yield "data: " + json.dumps({"delta": d, "done": False}, ensure_ascii=False) + "\n\n"
+        else:
+            # 降级：展示本地检索片段 + 模拟回答（无 Key 可用；设置 Key 后走真实 LLM）
+            preview = "\n".join(
+                f"[{i}] ({h.get('metadata', {}).get('year_month', '?')}) {h.get('content', '')}"
+                for i, h in enumerate(hits[:3], 1)
+            )
+            answer = (
+                f"关于「{question}」，本地检索到的最相关片段：\n{preview}\n\n"
+                f"（未配置 API Key，当前为降级模拟回答。POST /api/config 设置 Key 后获得真实 AI 回答）"
+            )
+            for ch in answer:
+                yield "data: " + json.dumps({"delta": ch, "done": False}, ensure_ascii=False) + "\n\n"
+                await asyncio.sleep(0.005)
         yield "data: " + json.dumps({"delta": "", "done": True}, ensure_ascii=False) + "\n\n"
 
     return StreamingResponse(
@@ -338,6 +382,20 @@ def make_demo():
 
     generate_demo_data()
     return {"status": "ok", "message": "演示数据集已重新生成"}
+
+
+@app.get("/api/config")
+def get_config():
+    """读取 LLM 配置（Key 不返回明文，仅返回是否已配置）。"""
+    cfg = load_config()
+    return {"base_url": cfg["base_url"], "model": cfg["model"], "has_key": has_key()}
+
+
+@app.post("/api/config")
+def set_config(req: ConfigRequest):
+    """设置 LLM 配置（api_key/base_url/model），存 data/config.json（不入库）。"""
+    cfg = save_config({"api_key": req.api_key, "base_url": req.base_url, "model": req.model})
+    return {"status": "ok", "base_url": cfg["base_url"], "model": cfg["model"], "has_key": has_key()}
 
 
 # 静态 UI 挂载必须在所有 API 路由之后（保证 /api/* 优先匹配）
