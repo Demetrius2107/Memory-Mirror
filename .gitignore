@@ -21,6 +21,7 @@ tools/memotrace_src/
 tools/wxkey_src/
 tools/wxkey_git/
 tools/weflow/
+tools/weflow51/
 tools/*.zip
 
 # ---- Node ----
