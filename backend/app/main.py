@@ -375,6 +375,46 @@ def talker_stats(wxid: str):
     }
 
 
+@app.get("/api/talker/{wxid}/emotions")
+def talker_emotions(wxid: str):
+    """情绪日历：按天的平均情感分与消息数（Week 6 仪表盘热力图数据源）。"""
+    conn = _db()
+    rows = conn.execute(
+        "SELECT date(time_utc, 'unixepoch', 'localtime') AS day, COUNT(*), AVG(emotion_score) "
+        "FROM messages WHERE talker=? AND emotion_score IS NOT NULL "
+        "GROUP BY day ORDER BY day",
+        (wxid,),
+    ).fetchall()
+    conn.close()
+    return {
+        "wxid": wxid,
+        "days": [{"day": r[0], "count": r[1], "avg": round(r[2], 3)} for r in rows],
+    }
+
+
+@app.get("/api/talker/{wxid}/words")
+def talker_words(wxid: str, top: int = 100):
+    """词云：文本消息高频词（快速分词器 + 停用词过滤，Week 6 仪表盘词云数据源）。"""
+    import re
+    from collections import Counter
+
+    from backend.app.embedder import _tokenize
+
+    # 过滤非词残渣：二进制转义（\x00）、单字符 ASCII、群消息发送者标识（wxid_xxx:）
+    _ARTIFACT = re.compile(r"^x[0-9a-fA-F]{2}$|^[a-zA-Z0-9]$|^wxid_[a-z0-9_]+$")
+
+    conn = _db()
+    rows = conn.execute(
+        "SELECT content FROM messages WHERE talker=? AND content_type='text' AND content != ''",
+        (wxid,),
+    ).fetchall()
+    conn.close()
+    c: Counter = Counter()
+    for (content,) in rows:
+        c.update(t for t in _tokenize(content) if not _ARTIFACT.match(t))
+    return {"wxid": wxid, "words": [{"word": w, "count": n} for w, n in c.most_common(top)]}
+
+
 @app.post("/api/demo")
 def make_demo():
     """重新生成演示数据集（向导"演示数据集"入口）。"""
