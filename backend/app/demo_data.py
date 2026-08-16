@@ -61,39 +61,87 @@ CONTENT_TYPE = ["text", "text", "text", "image", "voice", "video", "file", "text
 
 # 简易规则情绪打分（对应 PRD R9：词典/规则流水线产出 emotion_score，非逐条 LLM）
 #
-# V3 — 优化版规则（2026-08-16）：
-# 1) 词边界匹配：避免「好」匹配「好累/心情不好」等子串误判
-# 2) 否定词感知：前 3 字内出现「不/没/别」时抵消该情感词
-# 3) 情感强度校准：根据消息长度和情感词密度调整分数
-# 4) 多词/长词优先：优先匹配「不想」而非「想」
-# 5) 问候语豁免："早上好/晚上好/大家好/好的"等中的"好"不匹配
-# 6) 网络用语/口语情感词扩展："醉了/服了/坑/无语/心态崩了"等
-# 7) 长文本分段累加：30字以上长句按情感簇分段，防止稀释
-# 8) 表情符号支持：😊😢😡😂等基础情感符号
+# V4 — jieba 分词增强版（2026-08-16）：
+# 1) 双引擎架构：子串匹配（标准词）+ jieba 分词精确匹配（短语级）
+# 2) 短语级情感词典：覆盖网络用语/口语/成语（"一脸懵逼"/"破防"/"上头"等）
+# 3) 分词精确匹配优先：jieba 分词后的整词匹配，避免子串误判
+# 4) 其余特性继承 V3：词边界匹配/否定词抵消/问候语豁免/表情符号/长文本校准
+
+import jieba
+# 主动初始化 jieba（惰性加载，首次 lcut 可能耗时）
+jieba.initialize()
 
 # ========== 情感词典 ==========
 
-# 正向词（多字词优先，权重1.0）
+# 正向词（多字词优先，子串匹配，权重1.0）
 POS_WORDS = [
-    # 强烈正向
     "太开心了", "哈哈哈", "开心", "哈哈", "好棒", "爱你", "感动", "太好了", "真不错",
-    # 中等正向
     "加油", "想你了", "不错", "好开心", "太棒了", "太感动",
 ]
-# 短正向词（单/双字，权重0.35）
+# 短正向词（单/双字，子串匹配，权重0.35）
 POS_SHORT = ["好", "太", "想", "终于", "棒", "赞"]
 
-# 负向词（多字词优先，权重1.0）
+# 负向词（多字词优先，子串匹配，权重1.0）
 NEG_WORDS = [
-    # 强烈负向
     "有点难过", "烦死了", "气死我了", "不想上班", "心情不好", "压力好大",
-    # 中等负向
     "难过", "烦", "失眠", "失望", "哭", "压力", "崩溃", "无语", "心态崩了",
-    # 抱怨/吐槽
     "太坑了", "醉了", "服了", "受不了", "搞不定", "算了吧",
 ]
-# 短负向词（单/双字，权重0.35）
+# 短负向词（单/双字，子串匹配，权重0.35）
 NEG_SHORT = ["累", "唉", "气", "坑", "没意思", "不好", "醉了", "烦"]
+
+# ========== 短语级情感词典（jieba 分词精确匹配） ==========
+# key: 情感短语, value: (情感值, 情感强度)
+# 情感值: +1.0~-1.0, 情感强度: 1-3（1=轻微, 2=中等, 3=强烈）
+# 这些短语必须通过 jieba 分词精确匹配，避免子串误判
+
+# 强烈负向短语（-1.0 ~ -0.8）
+PHRASE_NEG_STRONG = {
+    "心态炸了": -1.0, "心态崩了": -1.0, "心态崩": -1.0,
+    "破防了": -1.0, "整破防了": -1.0,
+    "绷不住了": -1.0, "蚌埠住了": -1.0,
+    "笑不活了": -0.9, "笑拉了": -0.9, "笑yue了": -0.9, "笑到头掉": -0.9,
+    "一脸懵逼": -0.8, "一脸懵": -0.8,
+    "泪崩了": -0.9, "泪崩": -0.9, "泪目了": -0.8,
+    "天塌了": -0.9, "天塌": -0.9,
+    "离大谱": -0.8, "太离谱了": -0.8,
+}
+
+# 中等负向短语（-0.7 ~ -0.4）
+PHRASE_NEG_MEDIUM = {
+    "无语了": -0.6, "无语": -0.5,
+    "心态炸": -0.7, "心态崩": -0.7,
+    "裂开了": -0.6, "裂开": -0.6,
+    "绝了": -0.5, "真的绝": -0.5,
+    "麻了": -0.5, "人麻了": -0.5, "看麻了": -0.5, "听麻了": -0.5, "整不会了": -0.5,
+    "整不会": -0.5,
+    "不是吧": -0.4, "天呐": -0.4,
+    "就这": -0.4, "就这？": -0.4,
+    "下头": -0.5, "真下头": -0.5, "下头男": -0.5,
+    "emo了": -0.6, "emo": -0.5, "深夜emo": -0.6,
+    "好家伙": -0.4,
+    "栓Q": -0.4, "我真的会谢": -0.5,
+    "一整个无语住": -0.6,
+    "离大谱": -0.6,
+    "离谱": -0.5,
+}
+
+# 强烈正向短语（+0.8 ~ +1.0）
+PHRASE_POS_STRONG = {
+    "绝绝子": 0.8, "针不戳": 0.8, "真不戳": 0.8,
+    "yyds": 0.9, "永远的神": 0.9,
+    "上头": 0.7, "狠狠上头": 0.8, "有点上头": 0.6,
+}
+
+# 合并所有短语词典
+PHRASE_DICT = {}
+PHRASE_DICT.update(PHRASE_NEG_STRONG)
+PHRASE_DICT.update(PHRASE_NEG_MEDIUM)
+PHRASE_DICT.update(PHRASE_POS_STRONG)
+
+# 将短语级情感词注册到 jieba 词典，确保被分词为一个整体
+for pw in PHRASE_DICT:
+    jieba.add_word(pw, freq=100, tag="x")
 
 # 表情符号 -> 情感值
 EMOJI_MAP = {
@@ -155,16 +203,13 @@ def _has_negator_before(text: str, match_pos: int) -> bool:
 
 
 def rule_sentiment(text: str) -> float:
-    """词典规则打分（V3 优化版）：-1 ~ 1。
+    """词典规则打分（V4 jieba 分词增强版）：-1 ~ 1。
     
-    增强特性：
-    - 词边界匹配避免子串误判
-    - 否定词感知（前 3 字内出现"不/没/别"时抵消）
-    - 多词/长词优先匹配
-    - 情感强度校准（长度调节 + 密度调节 + 长句分段）
-    - 问候语/确认语豁免
-    - 表情符号情感支持
-    - 网络用语/口语情感词扩展
+    双引擎架构：
+    1) jieba 分词精确匹配（短语级情感词典，优先）
+    2) 子串匹配（标准情感词，兜底）
+    3) 表情符号情感
+    4) 情感强度校准（长度调节 + 密度调节 + 长句分段）
     """
     if not text or not text.strip():
         return 0.0
@@ -172,26 +217,69 @@ def rule_sentiment(text: str) -> float:
     pos_score = 0.0
     neg_score = 0.0
 
+    # ---- 引擎1：jieba 分词精确匹配（短语级） ----
+    words = jieba.lcut(text)
+    phrase_matched = {}  # phrase -> score
+    for w in words:
+        if w in PHRASE_DICT:
+            phrase_matched[w] = PHRASE_DICT[w]
+
+    # 补充：子串匹配也检查短语词典（防止 jieba 未识别的新词）
+    # 对未匹配到的短语做子串兜底
+    for phrase, score in PHRASE_DICT.items():
+        if phrase in text and phrase not in phrase_matched:
+            # 检查是否已被其他短语覆盖
+            already_covered = False
+            for existing in phrase_matched:
+                if existing in phrase or phrase in existing:
+                    already_covered = True
+                    break
+            if not already_covered:
+                phrase_matched[phrase] = score
+    # 短语贡献
+    for phrase, score in phrase_matched.items():
+        if score > 0:
+            pos_score += abs(score)
+        else:
+            neg_score += abs(score)
+
+    # ---- 引擎2：子串匹配（标准词，仅当短语引擎未匹配到该部分时） ----
+    # 已匹配的短语所覆盖的字符范围，避免双重计数
+    covered = set()
+    for phrase in phrase_matched:
+        idx = text.find(phrase)
+        while idx != -1:
+            for i in range(idx, idx + len(phrase)):
+                covered.add(i)
+            idx = text.find(phrase, idx + 1)
+
+    def _is_covered(start: int, end: int) -> bool:
+        """检查字符区间 [start, end) 是否已被短语引擎覆盖。"""
+        for i in range(start, end):
+            if i in covered:
+                return True
+        return False
+
     def _find_matches(word_list, is_short: bool):
-        """在 text 中查找匹配，返回 (总得分, 已匹配索引集合)。"""
+        """子串匹配（仅在未被短语引擎覆盖的位置）。"""
         nonlocal pos_score, neg_score
         for w in word_list:
             if not _word_boundary_match(text, w):
                 continue
-            # 找该词所有出现位置
             idx = 0
             while True:
                 idx = text.find(w, idx)
                 if idx == -1:
                     break
+                # 如果该词已被短语引擎覆盖，跳过
+                if _is_covered(idx, idx + len(w)):
+                    idx += 1
+                    continue
                 # 检查是否被否定词修饰
                 has_neg = _has_negator_before(text, idx)
                 if has_neg:
-                    # 否定词修饰：该情感词被抵消，正负都不计
-                    # 如"别烦我"中"烦"的负向被"别"抵消
                     idx += len(w)
                     continue
-                # 短词权重降低，长词权重满
                 wgt = 0.35 if is_short else 1.0
                 if word_list is POS_WORDS or word_list is POS_SHORT:
                     pos_score += wgt
@@ -199,13 +287,13 @@ def rule_sentiment(text: str) -> float:
                     neg_score += wgt
                 idx += len(w)
 
-    # 先匹配长词（多字词优先），再匹配短词
+    # 子串匹配
     _find_matches(POS_WORDS, is_short=False)
     _find_matches(NEG_WORDS, is_short=False)
     _find_matches(POS_SHORT, is_short=True)
     _find_matches(NEG_SHORT, is_short=True)
 
-    # --- 表情符号情感 ---
+    # ---- 引擎3：表情符号情感 ----
     emoji_score = 0.0
     for ch in text:
         if ch in EMOJI_MAP:
@@ -213,45 +301,36 @@ def rule_sentiment(text: str) -> float:
 
     total = pos_score + neg_score + abs(emoji_score)
 
-    # 表情符号单独处理：如果只有表情符号没有文字情感词
+    # 只有表情符号/只有短语的情况
     if total == 0:
         if emoji_score != 0:
-            # 只有表情符号，收缩到 ±0.6
             raw = max(-0.6, min(0.6, emoji_score))
         else:
-            # 无情感词：随机微幅波动（-0.15 ~ 0.15），避免全零
             return round(random.uniform(-0.15, 0.15), 3)
         return round(raw, 3)
 
-    # 基础分数（融合表情符号）
+    # 基础分数
     raw = (pos_score - neg_score + emoji_score) / total
 
-    # 表情符号弱化：如果文字情感贡献很少（<0.5），以表情符号为主时上限0.6
+    # 表情符号弱化
     if pos_score + neg_score < 0.5 and abs(emoji_score) > 0:
         raw = max(-0.6, min(0.6, raw))
 
-    # --- 情感强度校准 ---
-    # 1) 情感词数量饱和
+    # --- 情感强度校准（继承 V3） ---
     if total <= 1.5:
         raw = raw * 0.65
     elif total <= 2.5:
         raw = raw * 0.85
-    # 2) 短句拉伸
     if len(text) <= 4 and total > 0:
         raw = raw * 1.3
-    # 3) 长句压缩：超过30字的长句，按情感簇分段
     if len(text) > 10:
         raw = raw * 0.85
     if len(text) > 30:
-        # 长文本：检测是否有连续的情感簇（连续3个词以上有情感词）
-        # 如果有，情感应该更强，而不是被稀释
         words_only = text.replace(" ", "").replace("　", "")
-        # 粗略估计情感词密度：如果>20%且有情感词，不压缩太狠
         if total > 0 and total / len(words_only) > 0.15:
-            raw = raw * 0.95  # 少压缩一点
+            raw = raw * 0.95
         else:
-            raw = raw * 0.75  # 多压缩一点
-    # 4) 情感密度校准
+            raw = raw * 0.75
     density = total / max(len(text), 1)
     if density > 0.3:
         raw = raw * 1.15
