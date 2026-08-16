@@ -46,6 +46,7 @@
     <button class="tab active" data-view="wizard">数据接入</button>
     <button class="tab" data-view="contacts">联系人</button>
     <button class="tab" data-view="search">智能检索</button>
+    <button class="tab" data-view="dashboard">仪表盘</button>
   </nav>
 </header>
 
@@ -108,8 +109,21 @@
       <div id="ragHits"></div>
     </div>
   </section>
+  <!-- ============ 视图 4：仪表盘（Week 6） ============ -->
+  <section id="view-dashboard" class="view">
+    <div class="card">
+      <h2>仪表盘（选择联系人 / 群）</h2>
+      <select id="dashTalker" style="width:100%;padding:8px;border:1px solid #d0d5dd;border-radius:6px;font-size:14px"></select>
+      <button id="btnDashLoad">加载仪表盘</button>
+      <p class="hint">数据源：stats（月度互动=亲密度曲线）· emotions（日均情感分=情绪日历）· words（高频词=词云）</p>
+    </div>
+    <div class="card"><h2>亲密度曲线（月度消息量）</h2><div id="chartIntimacy" style="height:260px"></div></div>
+    <div class="card"><h2>情绪日历（日均情感分，绿=正向 / 红=负向）</h2><div id="chartEmotion" style="height:220px"></div></div>
+    <div class="card"><h2>词云（高频词）</h2><div id="chartWords" style="min-height:160px"></div></div>
+  </section>
 </main>
 
+<script src="vendor/echarts.min.js"></script>
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
@@ -161,6 +175,7 @@ document.querySelectorAll(".tab").forEach((btn) => {
     document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
     $("view-" + btn.dataset.view).classList.add("active");
     if (btn.dataset.view === "contacts") loadContacts();
+    if (btn.dataset.view === "dashboard") loadDashTalkers();
   };
 });
 
@@ -259,6 +274,67 @@ $("btnRag").onclick = async () => {
   } catch (e) { box.innerHTML = `<p class="msg err">检索失败：${escapeHtml(e.message)}</p>`; }
 };
 $("ragQuery").addEventListener("keydown", (e) => { if (e.key === "Enter") $("btnRag").click(); });
+
+// ---------- 仪表盘（Week 6：亲密度曲线 / 情绪日历 / 词云） ----------
+let dashCharts = {};
+function renderIntimacy(monthly) {
+  const el = $("chartIntimacy");
+  if (!dashCharts.intimacy) dashCharts.intimacy = echarts.init(el);
+  dashCharts.intimacy.setOption({
+    tooltip: { trigger: "axis" },
+    grid: { left: 40, right: 16, top: 16, bottom: 24 },
+    xAxis: { type: "category", data: monthly.map((m) => m.month), axisLabel: { fontSize: 11 } },
+    yAxis: { type: "value" },
+    series: [{ type: "line", smooth: true, areaStyle: { opacity: 0.15 }, data: monthly.map((m) => m.count), itemStyle: { color: "#1677ff" } }],
+  });
+}
+function renderEmotion(days) {
+  const el = $("chartEmotion");
+  if (!dashCharts.emotion) dashCharts.emotion = echarts.init(el);
+  if (!days.length) { dashCharts.emotion.clear(); return; }
+  const start = days[0].day.slice(0, 7), end = days[days.length - 1].day.slice(0, 7);
+  dashCharts.emotion.setOption({
+    tooltip: {},
+    visualMap: { min: -1, max: 1, calculable: true, orient: "horizontal", left: "center", bottom: 0, inRange: { color: ["#d94e5d", "#f0f0f0", "#3b8f5a"] } },
+    calendar: { range: [start, end], cellSize: ["auto", 15], top: 20, bottom: 55 },
+    series: [{ type: "heatmap", coordinateSystem: "calendar", data: days.map((d) => [d.day, d.avg]) }],
+  });
+}
+function renderWords(words) {
+  const el = $("chartWords");
+  if (!words.length) { el.innerHTML = '<p class="hint">无文本消息</p>'; return; }
+  const max = Math.max(1, ...words.map((w) => w.count));
+  el.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center">` +
+    words.map((w, i) => {
+      const fs = 12 + Math.round((w.count / max) * 22);
+      const hue = (i * 47) % 360;
+      return `<span style="font-size:${fs}px;color:hsl(${hue},65%,42%);line-height:1.5">${escapeHtml(w.word)}</span>`;
+    }).join("") + `</div>`;
+}
+async function loadDashboard() {
+  const wxid = $("dashTalker").value;
+  if (!wxid) { alert("请选择联系人/群"); return; }
+  try {
+    const [s, e, w] = await Promise.all([
+      api(`/api/talker/${encodeURIComponent(wxid)}/stats`),
+      api(`/api/talker/${encodeURIComponent(wxid)}/emotions`),
+      api(`/api/talker/${encodeURIComponent(wxid)}/words`),
+    ]);
+    renderIntimacy(s.monthly || []);
+    renderEmotion(e.days || []);
+    renderWords(w.words || []);
+  } catch (err) { alert("仪表盘加载失败：" + err.message); }
+}
+async function loadDashTalkers() {
+  try {
+    const d = await api("/api/contacts");
+    const sel = $("dashTalker");
+    sel.innerHTML = d.items.map((c) => `<option value="${escapeHtml(c.wxid)}">${escapeHtml(c.display_name)}（${c.type}）</option>`).join("");
+    if (d.items.length) loadDashboard();
+  } catch (e) { /* 无数据时静默 */ }
+}
+$("btnDashLoad").onclick = loadDashboard;
+window.addEventListener("resize", () => Object.values(dashCharts).forEach((c) => c.resize()));
 </script>
 </body>
 </html>
