@@ -1,17 +1,38 @@
-"""独立进程构建索引（脱离 bash 超时存活，日志写 stdout 供轮询）。"""
+"""独立进程构建索引（pythonw 无控制台版：直接写日志文件，不依赖 stdout）。
+
+启动：powershell Start-Process pythonw.exe tools\\build_index_runner.py
+轮询：grep '^DONE' data/index_build.log
+"""
 
 import sys
+import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 from backend.app.rag_index import build_index
 
+LOG = ROOT / "data" / "index_build.log"
+
+
+def log(msg: str):
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    with open(LOG, "a", encoding="utf-8") as f:
+        f.write(msg + "\n")
+
 
 def cb(**kw):
-    print(f"{kw.get('phase', '?')} {kw.get('current', 0)} / {kw.get('total', 0)}", flush=True)
+    log(f"{kw.get('phase', '?')} {kw.get('current', 0)} / {kw.get('total', 0)}")
 
 
 if __name__ == "__main__":
-    n = build_index(progress_cb=cb)
-    print(f"DONE {n}", flush=True)
+    log(f"== build start {time.strftime('%H:%M:%S')} ==")
+    try:
+        n = build_index(progress_cb=cb)
+        log(f"DONE {n}")
+    except Exception:
+        import traceback
+
+        log("CRASH " + traceback.format_exc())
+        raise
