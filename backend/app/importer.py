@@ -27,10 +27,10 @@ from backend.app.demo_data import DB_PATH, rule_sentiment
 
 # ---------------- 字段别名（宽松映射，兼容 WeChatMsg / chatlog / 通用导出） ----------------
 ALIAS_TIME = ["createtime", "time", "ts", "date", "timestamp", "strtime", "create_time", "datetime"]
-ALIAS_TALKER = ["talker", "from", "fromuser", "wxid", "sender", "username", "user"]
+ALIAS_TALKER = ["talker", "talkerid", "from", "fromuser", "wxid", "sender", "username", "user"]
 ALIAS_CONTENT = ["content", "strcontent", "msg", "message", "text"]
 ALIAS_TYPE = ["type", "msgtype", "ctype", "message_type"]
-ALIAS_ID = ["msg_id", "msgid", "id", "message_id"]
+ALIAS_ID = ["msg_id", "msgid", "id", "message_id", "localid"]
 
 # 联系人文件列别名
 ALIAS_CONTACT_WXID = ["wxid", "username", "user", "id"]
@@ -148,10 +148,13 @@ def clean_row(raw: dict) -> dict | None:
     talker = _pick(raw, ALIAS_TALKER)
     content_raw = _pick(raw, ALIAS_CONTENT)
     ts = parse_time_utc(_pick(raw, ALIAS_TIME))
-    if not talker or content_raw is None or ts is None:
+    msg_type = _pick(raw, ALIAS_TYPE)
+    is_media = msg_type in ("3", "image", "34", "voice", "43", "video")
+    if not talker or ts is None:
         return None
-    content = desensitize(str(content_raw).strip())
-    if not content and _pick(raw, ALIAS_TYPE) not in ("3", "image"):  # 图片等媒体消息允许空文本
+    content = desensitize(str(content_raw or "").strip())
+    # 媒体消息（图片/语音/视频）允许空文本；非媒体消息空内容则丢弃（如系统消息）
+    if not is_media and (content_raw is None or not content):
         return None
 
     msg_id = _pick(raw, ALIAS_ID)
@@ -256,6 +259,23 @@ def run_import(
     raws = list(raw_iter)
     cb(phase="clean", message=f"正在清洗数据（{len(raws)} 条原始记录）", current=0, total=len(raws))
 
+    # 联系人自动构建：消息文件自带 Remark/NickName 列时，无需单独联系人文件（R17/MemoTrace 兼容）
+    auto_contacts: dict[str, dict] = {}
+    if contact_path is None:
+        for raw in raws:
+            tk = _pick(raw, ALIAS_TALKER)
+            if not tk:
+                continue
+            nick = _pick(raw, ALIAS_CONTACT_NICK) or ""
+            remark = _pick(raw, ALIAS_CONTACT_REMARK) or ""
+            if nick or remark:
+                auto_contacts[str(tk)] = {
+                    "wxid": str(tk), "nickname": str(nick), "remark": str(remark),
+                    "type": "group" if "chatroom" in str(tk) else "friend",
+                }
+        if auto_contacts:
+            print(f"  [importer] 从消息文件自动构建 {len(auto_contacts)} 个联系人")
+
     # 2) 清洗
     cleaned = []
     for i, raw in enumerate(raws):
@@ -277,9 +297,13 @@ def run_import(
             "VALUES (?,?,?,?,?,?,?)",
             [(r["msg_id"], r["talker"], r["time_utc"], r["content"], r["content_type"], r["emotion_score"], r["year_month"]) for r in cleaned],
         )
-        # 联系人/群成员配对导入（R17）
-        if contact_path:
-            for c in read_contacts(Path(contact_path)):
+        # 联系人导入（R17）：显式联系人文件优先，否则用消息文件自带的 Remark/NickName 自动构建
+        if contact_path or auto_contacts:
+            contacts_rows = list(read_contacts(Path(contact_path))) if contact_path else []
+            merged = {c["wxid"]: c for c in contacts_rows}
+            for wxid, c in auto_contacts.items():
+                merged.setdefault(wxid, c)
+            for c in merged.values():
                 conn.execute(
                     "INSERT OR REPLACE INTO contacts (wxid, nickname, remark, type) VALUES (?,?,?,?)",
                     (c["wxid"], c["nickname"], c["remark"], c["type"]),

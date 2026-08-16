@@ -1,0 +1,5 @@
+﻿localId,TalkerId,Type,SubType,IsSender,CreateTime,Status,StrContent,StrTime,Remark,NickName,Sender
+1,wxid_lin,1,0,0,1704243600,4,早上好 13812345678,2024-01-03 09:00:00,林小满,林小满,林小满
+2,wxid_lin,1,0,1,1704243660,4,好的谢谢,2024-01-03 09:01:00,林小满,林小满,我自己
+3,wxid_zhang,3,0,0,1704247200,4,,2024-01-03 10:00:00,老张,Zhang Wei,老张
+4,chatroom_team,1,0,0,1704330000,4,项目方案改好了吗,2024-01-04 09:00:00,项目群,项目攻坚小组,凯哥
