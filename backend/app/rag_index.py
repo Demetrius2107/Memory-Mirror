@@ -16,9 +16,9 @@ import chromadb
 from backend.app.demo_data import DB_PATH
 from backend.app.embedder import embed_texts, fit
 
-CHUNK_SIZE = 500
-CHUNK_OVERLAP = 50
-BATCH = 128
+CHUNK_SIZE = 1000  # 1000 字切片（原 500）：长消息片段数减半，RAG 粒度仍够
+CHUNK_OVERLAP = 100
+BATCH = 256  # 批量加大：减少 chroma 调用次数与序列化开销
 COLLECTION_NAME = "memorymirror_messages"
 CHROMA_DIR_NAME = "chroma"
 
@@ -56,61 +56,80 @@ def get_collection(db_path: Path, create: bool = True):
 
 
 def build_index(db_path: str | Path | None = None, progress_cb=None) -> int:
-    """全量重建索引：读 messages → 切片 → embedding → ChromaDB upsert。返回片段数。"""
+    """全量重建索引（两遍流式，低内存）：读消息 → 切片 → embedding → ChromaDB upsert。
+
+    Pass 1：流式切片 → fit（生成器喂入，不驻留 1.88M 片段文本列表）
+    Pass 2：重读 → 批量向量化 + upsert（元数据现用现建，不驻留片段列表）
+    返回片段数。
+    """
     db_path = Path(db_path) if db_path else DB_PATH
 
     def cb(**kw):
         if progress_cb:
             progress_cb(**kw)
 
+    SQL = "SELECT msg_id, talker, time_utc, content, year_month FROM messages ORDER BY id"
+
+    def iter_chunk_texts(conn):
+        for msg_id, talker, ts, content, ym in conn.execute(SQL):
+            for _start, seg in chunk_text(content):
+                if seg.strip() and len(seg.strip()) >= 2:  # 跳过无意义短片段
+                    yield seg
+
     cb(status="running", phase="read", message="正在读取消息", current=0, total=0)
     conn = sqlite3.connect(db_path)
     try:
-        rows = conn.execute(
-            "SELECT msg_id, talker, time_utc, content, year_month FROM messages ORDER BY id"
-        ).fetchall()
+        n_msgs = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+        cb(phase="chunk", message=f"正在切片（{n_msgs} 条消息）", current=0, total=n_msgs)
+        # Pass 1：fit（迭代器，大语料不驻留）
+        fit(iter_chunk_texts(conn))
+        cb(phase="embed", message="正在向量化...", current=0, total=0)
+
+        # Pass 2：批量 upsert
+        client = _client(db_path)
+        try:
+            client.delete_collection(COLLECTION_NAME)
+        except Exception:
+            pass
+        col = client.create_collection(
+            COLLECTION_NAME,
+            metadata={"hnsw:space": "cosine", "hnsw:M": 12, "hnsw:construction_ef": 120},
+        )
+
+        done = 0
+        batch: list = []
+
+        def flush():
+            nonlocal done
+            if not batch:
+                return
+            ids = [b[0] for b in batch]
+            segs = [b[1] for b in batch]
+            metas = [b[2] for b in batch]
+            vecs = embed_texts(segs)
+            col.upsert(ids=ids, embeddings=vecs.tolist(), documents=segs, metadatas=metas)
+            done += len(batch)
+            cb(current=done)
+            batch.clear()
+
+        for msg_id, talker, ts, content, ym in conn.execute(SQL):
+            for start, seg in chunk_text(content):
+                if not (seg.strip() and len(seg.strip()) >= 2):
+                    continue
+                batch.append(
+                    (
+                        f"{msg_id}#{start}",
+                        seg,
+                        {"msg_id": msg_id, "talker": talker, "time_utc": ts, "year_month": ym, "start_idx": start},
+                    )
+                )
+                if len(batch) >= BATCH:
+                    flush()
+        flush()
     finally:
         conn.close()
-    cb(phase="chunk", message=f"正在切片（{len(rows)} 条消息）", current=0, total=len(rows))
-
-    chunks: list[tuple[str, str, dict]] = []  # (doc_id, text, metadata)
-    for msg_id, talker, ts, content, ym in rows:
-        for start, seg in chunk_text(content):
-            if not seg.strip():
-                continue
-            chunks.append(
-                (
-                    f"{msg_id}#{start}",
-                    seg,
-                    {"msg_id": msg_id, "talker": talker, "time_utc": ts, "year_month": ym, "start_idx": start},
-                )
-            )
-    cb(phase="embed", message=f"正在向量化（{len(chunks)} 个片段）", current=0, total=len(chunks))
-
-    # 全量文本 fit：保证 query 与 doc 处于同一词表/向量空间
-    fit([c[1] for c in chunks])
-
-    client = _client(db_path)
-    try:
-        client.delete_collection(COLLECTION_NAME)
-    except Exception:
-        pass
-    col = client.create_collection(COLLECTION_NAME, metadata={"hnsw:space": "cosine"})
-
-    done = 0
-    for i in range(0, len(chunks), BATCH):
-        batch = chunks[i : i + BATCH]
-        vecs = embed_texts([c[1] for c in batch])
-        col.upsert(
-            ids=[c[0] for c in batch],
-            embeddings=vecs.tolist(),
-            documents=[c[1] for c in batch],
-            metadatas=[c[2] for c in batch],
-        )
-        done += len(batch)
-        cb(current=done)
-    cb(status="done", phase="done", message=f"索引构建完成：{len(chunks)} 个片段", current=done, total=done)
-    return len(chunks)
+    cb(status="done", phase="done", message=f"索引构建完成：{done} 个片段", current=done, total=done)
+    return done
 
 
 def search(query: str, top_k: int = 20, db_path: str | Path | None = None) -> list[dict]:

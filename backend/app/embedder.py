@@ -73,14 +73,16 @@ class TfidfEmbedder:
         self.vocab: dict[str, int] = {}
         self.idf: np.ndarray | None = None
 
-    def fit(self, texts: list[str]) -> "TfidfEmbedder":
+    def fit(self, texts) -> "TfidfEmbedder":
+        """拟合词表。texts 支持 list 或任意迭代器（生成器可避免大语料驻留内存）。"""
         df: Counter[str] = Counter()
+        n = 0
         for t in texts:
             df.update(set(_tokenize(t)))
+            n += 1
         cand = [(w, c) for w, c in df.items() if c >= self.min_df]
         cand.sort(key=lambda x: -x[1])
         self.vocab = {w: i for i, (w, _) in enumerate(cand[: self.dim])}
-        n = len(texts)
         self.idf = np.array(
             [math.log((1 + n) / (1 + df[w])) + 1.0 for w in self.vocab],
             dtype=np.float32,
