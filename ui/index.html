@@ -99,14 +99,30 @@
     </div>
   </section>
 
-  <!-- ============ 视图 3：智能检索 ============ -->
+  <!-- ============ 视图 3：智能检索 + 范围分析 ============ -->
   <section id="view-search" class="view">
     <div class="card">
       <h2>RAG 语义检索（本地向量索引）</h2>
+      <label>检索范围</label>
+      <select id="ragScope" style="width:100%;padding:8px;border:1px solid #d0d5dd;border-radius:6px;font-size:14px">
+        <option value="">全部数据</option>
+      </select>
       <input type="text" id="ragQuery" placeholder="例如：我们哪一年吵架最多？ / 关于项目方案说了什么" />
       <button id="btnRag">检索</button>
       <p class="hint">距离越小越相关（0 = 完全匹配）。需先在上方“数据接入”完成导入与索引构建。</p>
       <div id="ragHits"></div>
+    </div>
+    <div class="card">
+      <h2>范围分析（全量 / 某人 / 某群，可并行）</h2>
+      <label>分析范围</label>
+      <select id="anaScope" style="width:100%;padding:8px;border:1px solid #d0d5dd;border-radius:6px;font-size:14px">
+        <option value="">全部数据（全量分析）</option>
+      </select>
+      <label>分析问题（可选：对该范围做片段检索）</label>
+      <input type="text" id="anaQuestion" placeholder="例如：我们聊过哪些项目相关的事？" />
+      <button id="btnAnalyze">发起分析</button>
+      <p class="hint">每次点击发起一个独立分析任务，可同时并行多个不同范围；结果按任务卡片展示（数据源：解密后入库的数据区）。</p>
+      <div id="anaTasks"></div>
     </div>
   </section>
   <!-- ============ 视图 4：仪表盘（Week 6） ============ -->
@@ -119,6 +135,7 @@
     </div>
     <div class="card"><h2>亲密度曲线（月度消息量）</h2><div id="chartIntimacy" style="height:260px"></div></div>
     <div class="card"><h2>情绪日历（日均情感分，绿=正向 / 红=负向）</h2><div id="chartEmotion" style="height:220px"></div></div>
+    <div class="card"><h2>情绪趋势（月度情感均值，蓝=正向趋势）</h2><div id="chartEmoMonth" style="height:200px"></div></div>
     <div class="card"><h2>词云（高频词）</h2><div id="chartWords" style="min-height:160px"></div></div>
   </section>
 </main>
@@ -176,6 +193,7 @@ document.querySelectorAll(".tab").forEach((btn) => {
     $("view-" + btn.dataset.view).classList.add("active");
     if (btn.dataset.view === "contacts") loadContacts();
     if (btn.dataset.view === "dashboard") loadDashTalkers();
+    if (btn.dataset.view === "search") fillScopes();
   };
 });
 
@@ -261,7 +279,7 @@ $("btnRag").onclick = async () => {
   if (!q) { alert("请输入问题"); return; }
   box.innerHTML = "检索中…";
   try {
-    const r = await api(`/api/rag/search?q=${encodeURIComponent(q)}&top_k=10`);
+    const r = await api(`/api/rag/search?q=${encodeURIComponent(q)}&top_k=10${$("ragScope").value ? "&scope_talker=" + encodeURIComponent($("ragScope").value) : ""}`);
     box.innerHTML = r.hits.length
       ? r.hits.map((h) => {
           const m = h.metadata || {};
@@ -274,6 +292,88 @@ $("btnRag").onclick = async () => {
   } catch (e) { box.innerHTML = `<p class="msg err">检索失败：${escapeHtml(e.message)}</p>`; }
 };
 $("ragQuery").addEventListener("keydown", (e) => { if (e.key === "Enter") $("btnRag").click(); });
+
+// ---------- 范围分析（全量 / 某人 / 某群，可并行） ----------
+let scopeItems = [];
+async function fillScopes() {
+  try {
+    if (!scopeItems.length) scopeItems = (await api("/api/contacts")).items;
+    const fill = (selId, allLabel) => {
+      const sel = $(selId), cur = sel.value;
+      const groups = scopeItems.filter((c) => c.type === "group");
+      const friends = scopeItems.filter((c) => c.type === "friend");
+      sel.innerHTML = `<option value="">${allLabel}</option>` +
+        groups.map((c) => `<option value="${escapeHtml(c.wxid)}">👥 ${escapeHtml(c.display_name)}</option>`).join("") +
+        friends.map((c) => `<option value="${escapeHtml(c.wxid)}">👤 ${escapeHtml(c.display_name)}</option>`).join("");
+      if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
+    };
+    fill("ragScope", "全部数据");
+    fill("anaScope", "全部数据（全量分析）");
+  } catch (e) { /* 无数据时保持空选项 */ }
+}
+
+$("btnAnalyze").onclick = async () => {
+  const scope = $("anaScope").value;
+  const question = $("anaQuestion").value.trim();
+  const box = $("anaTasks");
+  const label = $("anaScope").selectedOptions[0]?.textContent || "全部数据";
+  let res;
+  try {
+    res = await api("/api/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scope_talker: scope || null, question: question || null, top_k: 8 }),
+    });
+  } catch (e) {
+    box.insertAdjacentHTML("afterbegin", `<div class="hit"><b>分析发起失败</b>：${escapeHtml(e.message)}</div>`);
+    return;
+  }
+  const card = document.createElement("div");
+  card.className = "hit";
+  card.innerHTML = `<b>${escapeHtml(label)}</b> <span class="badge">${escapeHtml(res.task_id)}</span> <span class="msg">排队中…</span><div class="anaBody"></div>`;
+  box.insertAdjacentElement("afterbegin", card);
+  const timer = setInterval(async () => {
+    try {
+      const t = await api(`/api/tasks/${res.task_id}`);
+      const msgEl = card.querySelector(".msg");
+      if (t.status === "done") {
+        clearInterval(timer);
+        msgEl.className = "msg ok"; msgEl.textContent = "完成";
+        renderAnaResult(card, t.result);
+      } else if (t.status === "error") {
+        clearInterval(timer);
+        msgEl.className = "msg err"; msgEl.textContent = "失败：" + (t.message || "");
+      } else {
+        msgEl.textContent = t.message || t.phase || "分析中…";
+      }
+    } catch (e) { clearInterval(timer); }
+  }, 1000);
+};
+
+function renderAnaResult(card, res) {
+  const s = (res && res.stats) || {};
+  const body = card.querySelector(".anaBody");
+  const months = (s.monthly || []).slice(-12);
+  const maxM = Math.max(1, ...months.map((m) => m.count));
+  body.innerHTML = `
+    <div style="margin-top:8px;font-size:13px;color:#333">
+      消息总数 <b>${s.total ?? "-"}</b> ·
+      时间 ${s.first_ts ? fmtTs(s.first_ts).slice(0, 10) : "-"} ~ ${s.last_ts ? fmtTs(s.last_ts).slice(0, 10) : "-"} ·
+      情绪均值 <b>${s.avg_emotion ?? "-"}</b><br/>
+      高频词：${(s.top_words || []).slice(0, 8).map((w) => `<span class="badge">${escapeHtml(w.word)}×${w.count}</span>`).join(" ") || "-"}
+      活跃时段：${(s.active_hours || []).map((h) => `${h.hour}:00(${h.count})`).join(" ") || "-"}
+    </div>
+    <div style="margin-top:8px">${months.map((m) => `
+      <div style="margin:2px 0;font-size:12px">
+        <span style="display:inline-block;width:56px;color:#888">${m.month}</span>
+        <span class="bar" style="height:10px;width:${(m.count / maxM * 160)}px"></span><span>${m.count}</span>
+      </div>`).join("")}</div>`;
+  const hits = (res && res.hits) || [];
+  if (hits.length) {
+    body.insertAdjacentHTML("beforeend", `<div style="margin-top:6px"><b>相关片段（${hits.length}）</b></div>` +
+      hits.map((h) => `<div style="margin:4px 0;font-size:12px;color:#555">${escapeHtml(h.content)} <span style="color:#aaa">${escapeHtml((h.metadata || {}).talker || "")} ${escapeHtml((h.metadata || {}).year_month || "")}</span></div>`).join(""));
+  }
+}
 
 // ---------- 仪表盘（Week 6：亲密度曲线 / 情绪日历 / 词云） ----------
 let dashCharts = {};
@@ -311,18 +411,39 @@ function renderWords(words) {
       return `<span style="font-size:${fs}px;color:hsl(${hue},65%,42%);line-height:1.5">${escapeHtml(w.word)}</span>`;
     }).join("") + `</div>`;
 }
+function renderEmoMonth(monthly) {
+  const el = $("chartEmoMonth");
+  if (!dashCharts.emoMonth) dashCharts.emoMonth = echarts.init(el);
+  // 按月份聚合情感均值（模拟：从daily emotions聚合到月）
+  // 如果后端没有按月聚合的接口，展示空图
+  if (!monthly || !monthly.length) { dashCharts.emoMonth.clear(); el.innerHTML = '<p class="hint">暂无情绪趋势数据</p>'; return; }
+  dashCharts.emoMonth.setOption({
+    tooltip: { trigger: "axis" },
+    grid: { left: 40, right: 16, top: 16, bottom: 24 },
+    xAxis: { type: "category", data: monthly.map((m) => m.month), axisLabel: { fontSize: 11, rotate: 45 } },
+    yAxis: { type: "value", min: -1, max: 1, splitLine: { lineStyle: { type: "dashed" } } },
+    visualMap: false,
+    series: [{
+      type: "bar", data: monthly.map((m) => m.count > 0 ? (m.avg_emo || 0) : null),
+      itemStyle: { color: (p) => p.value >= 0 ? "#3b8f5a" : "#d94e5d" },
+      barWidth: "60%",
+    }],
+  });
+}
 async function loadDashboard() {
   const wxid = $("dashTalker").value;
   if (!wxid) { alert("请选择联系人/群"); return; }
   try {
-    const [s, e, w] = await Promise.all([
+    const [s, e, w, em] = await Promise.all([
       api(`/api/talker/${encodeURIComponent(wxid)}/stats`),
       api(`/api/talker/${encodeURIComponent(wxid)}/emotions`),
       api(`/api/talker/${encodeURIComponent(wxid)}/words`),
+      api(`/api/talker/${encodeURIComponent(wxid)}/emotions/monthly`),
     ]);
     renderIntimacy(s.monthly || []);
     renderEmotion(e.days || []);
     renderWords(w.words || []);
+    renderEmoMonth(em.months || []);
   } catch (err) { alert("仪表盘加载失败：" + err.message); }
 }
 async function loadDashTalkers() {

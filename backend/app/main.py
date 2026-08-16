@@ -29,6 +29,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from backend.app.analyzer import analyze_scope
 from backend.app.demo_data import DB_PATH, generate_demo_data
 from backend.app.importer import run_import
 from backend.app.llm import build_rag_prompt, has_key, load_config, save_config, stream_chat
@@ -54,6 +55,9 @@ def _db() -> sqlite3.Connection:
 # ---------------- 导入任务状态（真实进度，R5 走 WebSocket 推送） ----------------
 TASKS: dict[str, dict] = {}
 TASKS_LOCK = threading.Lock()
+# 并行分析任务的 RAG 段串行锁：embedder 为全局单例，多个任务同时 fit 会互相踩
+# （统计段仍并行，仅 fit+search 段互斥）
+ANALYZE_RAG_LOCK = threading.Lock()
 
 
 class ImportRequest(BaseModel):
@@ -186,16 +190,17 @@ async def start_index():
 
 
 @app.get("/api/rag/search")
-def rag_search(q: str = "", top_k: int = 20):
+def rag_search(q: str = "", top_k: int = 20, scope_talker: str | None = None):
     """RAG 向量检索（Week 4）：问题 → Top-K 相关片段（含元数据，距离越小越相关）。
 
+    scope_talker：范围过滤（某人 wxid / 某群 ID；None=全量）。
     说明：reranker 依赖 bge-reranker ONNX（当前网络无法下载），暂时以向量距离排序，
     模型可用后在此接入重排（PRD §4.4）。
     """
     q = q.strip()
     if not q:
         raise HTTPException(status_code=400, detail="q 不能为空")
-    hits = search(q, top_k=max(1, min(top_k, 50)))
+    hits = search(q, top_k=max(1, min(top_k, 50)), scope_talker=scope_talker)
     return {"query": q, "hits": hits}
 
 
@@ -286,13 +291,28 @@ async def ws_progress(ws: WebSocket):
         await ws.close()
 
 
+def _scope_label(scope_talker: str | None) -> str:
+    """分析范围显示名（备注名 > 昵称 > wxid；None = 全部数据）。"""
+    if not scope_talker:
+        return "全部数据"
+    conn = _db()
+    row = conn.execute(
+        "SELECT nickname, remark FROM contacts WHERE wxid=?", (scope_talker,)
+    ).fetchone()
+    conn.close()
+    if row:
+        return f"「{row[1] or row[0] or scope_talker}」({scope_talker})"
+    return f"「{scope_talker}」"
+
+
 @app.get("/api/chat/stream")
-async def chat_stream(question: str = "我们哪一年吵架最多？"):
+async def chat_stream(question: str = "我们哪一年吵架最多？", scope_talker: str | None = None):
     """AI 问答流式输出（SSE，R5 / Week 5）：RAG 检索 → Prompt 组装 → LLM 流式；
+    范围可选（scope_talker：某人 wxid / 某群 ID；None=全量）；
     未配置 Key 或调用失败时降级为模拟回答（附检索片段预览，保持可用）。"""
 
-    hits = search(question, top_k=8)
-    messages = build_rag_prompt(question, hits)
+    hits = search(question, top_k=8, scope_talker=scope_talker)
+    messages = build_rag_prompt(question, hits, scope_label=_scope_label(scope_talker))
     llm_on = has_key()
 
     async def event_gen():
@@ -357,6 +377,70 @@ async def upload_file(file: UploadFile):
     return {"path": str(dest), "name": file.filename, "size": dest.stat().st_size}
 
 
+class AnalyzeRequest(BaseModel):
+    scope_talker: str | None = None   # 范围：某人 wxid / 某群 ID；None=全量
+    question: str | None = None       # 可选：对范围做 RAG 片段检索
+    top_k: int = 8
+
+
+@app.post("/api/analyze")
+async def start_analyze(req: AnalyzeRequest):
+    """分析任务（范围可选 + 可并行）：对解密数据区（demo.db）按范围聚合统计，
+    可选附带 RAG 片段检索。每个任务一个后台线程，TASKS 为多任务并存——
+    可同时发起多个不同范围的分析。结果随 GET /api/tasks/{id} 返回。"""
+    task_id = f"ana_{int(time.time() * 1000)}"
+    with TASKS_LOCK:
+        TASKS[task_id] = {
+            "task_id": task_id, "status": "queued", "phase": "queued",
+            "current": 0, "total": 0, "message": "分析任务已创建，等待执行",
+        }
+
+    def _run():
+        def cb(**kw):
+            with TASKS_LOCK:
+                TASKS[task_id].update(kw)
+
+        try:
+            cb(status="running", phase="stats", message="正在统计范围数据", current=1, total=3)
+            stats = analyze_scope(DB_PATH, scope_talker=req.scope_talker)
+            result = {
+                "scope_talker": req.scope_talker,
+                "scope_label": _scope_label(req.scope_talker),
+                "stats": stats,
+                "hits": [],
+            }
+            if req.question and req.question.strip():
+                cb(phase="rag", message="正在检索相关片段", current=2, total=3)
+                from backend.app.rag_index import chunk_text, search
+                from backend.app.embedder import fit
+
+                def all_chunk_texts():
+                    conn = sqlite3.connect(DB_PATH)
+                    try:
+                        for (content,) in conn.execute("SELECT content FROM messages"):
+                            for _s, seg in chunk_text(content):
+                                s = seg.strip()
+                                if s and len(s) >= 2:
+                                    yield s
+                    finally:
+                        conn.close()
+
+                with ANALYZE_RAG_LOCK:  # 并行任务互斥：embedder 为全局单例
+                    fit(all_chunk_texts())  # 与索引同词表，保证检索一致
+                    result["hits"] = search(
+                        req.question.strip(),
+                        top_k=max(1, min(req.top_k, 20)),
+                        scope_talker=req.scope_talker,
+                    )
+            cb(status="done", phase="done", message="分析完成", current=3, total=3, result=result)
+        except Exception as e:
+            cb(status="error", phase="error", message=f"分析失败: {e}")
+            traceback.print_exc()
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"task_id": task_id, "status": "accepted"}
+
+
 @app.get("/api/talker/{wxid}/stats")
 def talker_stats(wxid: str):
     """单联系人/群统计：总数、最近时间、月度消息量（前端详情/Week 6 曲线数据基础）。"""
@@ -389,6 +473,23 @@ def talker_emotions(wxid: str):
     return {
         "wxid": wxid,
         "days": [{"day": r[0], "count": r[1], "avg": round(r[2], 3)} for r in rows],
+    }
+
+
+@app.get("/api/talker/{wxid}/emotions/monthly")
+def talker_emotions_monthly(wxid: str):
+    """情绪月趋势：按月的平均情感分（Week 6 仪表盘情绪趋势柱状图数据源）。"""
+    conn = _db()
+    rows = conn.execute(
+        "SELECT year_month, COUNT(*), AVG(emotion_score) "
+        "FROM messages WHERE talker=? AND emotion_score IS NOT NULL "
+        "GROUP BY year_month ORDER BY year_month",
+        (wxid,),
+    ).fetchall()
+    conn.close()
+    return {
+        "wxid": wxid,
+        "months": [{"month": r[0], "count": r[1], "avg_emo": round(r[2], 3)} for r in rows],
     }
 
 
