@@ -61,23 +61,54 @@ CONTENT_TYPE = ["text", "text", "text", "image", "voice", "video", "file", "text
 
 # 简易规则情绪打分（对应 PRD R9：词典/规则流水线产出 emotion_score，非逐条 LLM）
 #
-# V2 — 增强版规则（2026-08-16）：
+# V3 — 优化版规则（2026-08-16）：
 # 1) 词边界匹配：避免「好」匹配「好累/心情不好」等子串误判
-# 2) 否定词反转：前 3 字内出现「不/没/别」时反转该词情感极性
+# 2) 否定词感知：前 3 字内出现「不/没/别」时抵消该情感词
 # 3) 情感强度校准：根据消息长度和情感词密度调整分数
 # 4) 多词/长词优先：优先匹配「不想」而非「想」
+# 5) 问候语豁免："早上好/晚上好/大家好/好的"等中的"好"不匹配
+# 6) 网络用语/口语情感词扩展："醉了/服了/坑/无语/心态崩了"等
+# 7) 长文本分段累加：30字以上长句按情感簇分段，防止稀释
+# 8) 表情符号支持：😊😢😡😂等基础情感符号
 
-# 正向词（优先匹配长词/多字词）
-POS_WORDS = ["太开心了", "哈哈哈", "开心", "哈哈", "好棒", "爱你", "感动", "加油", "想你了", "太好了", "真不错"]
-# 短正向词（仅当不被前 3 字否定词修饰时生效）
-POS_SHORT = ["好", "太", "想", "终于", "不错"]
+# ========== 情感词典 ==========
 
-# 负向词（优先匹配长词/多字词）
-NEG_WORDS = ["有点难过", "烦死了", "气死我了", "不想上班", "心情不好", "压力好大", "难过", "烦", "失眠", "失望", "哭", "压力"]
-# 短负向词（仅当不被前 3 字否定词修饰时生效）
-NEG_SHORT = ["累", "唉", "气", "没意思", "不好"]
+# 正向词（多字词优先，权重1.0）
+POS_WORDS = [
+    # 强烈正向
+    "太开心了", "哈哈哈", "开心", "哈哈", "好棒", "爱你", "感动", "太好了", "真不错",
+    # 中等正向
+    "加油", "想你了", "不错", "好开心", "太棒了", "太感动",
+]
+# 短正向词（单/双字，权重0.35）
+POS_SHORT = ["好", "太", "想", "终于", "棒", "赞"]
 
-# 否定词（前 3 字内出现则反转情感极性）
+# 负向词（多字词优先，权重1.0）
+NEG_WORDS = [
+    # 强烈负向
+    "有点难过", "烦死了", "气死我了", "不想上班", "心情不好", "压力好大",
+    # 中等负向
+    "难过", "烦", "失眠", "失望", "哭", "压力", "崩溃", "无语", "心态崩了",
+    # 抱怨/吐槽
+    "太坑了", "醉了", "服了", "受不了", "搞不定", "算了吧",
+]
+# 短负向词（单/双字，权重0.35）
+NEG_SHORT = ["累", "唉", "气", "坑", "没意思", "不好", "醉了", "烦"]
+
+# 表情符号 -> 情感值
+EMOJI_MAP = {
+    "😊": 0.5, "😄": 0.6, "😂": 0.5, "🤣": 0.5, "😍": 0.7, "🥰": 0.6, "❤️": 0.4, "💕": 0.4,
+    "😢": -0.5, "😭": -0.6, "😡": -0.6, "😤": -0.4, "😞": -0.4, "😔": -0.3, "💔": -0.4,
+    "😅": 0.2, "🤔": 0.0, "🙄": -0.2,
+}
+
+# 问候语模式（单字"好"在这些模式中不匹配）
+GREETING_PATTERNS = {"早上好", "上午好", "中午好", "下午好", "晚上好", "大家好", "大家好呀", "你好", "你好呀"}
+
+# 确认语模式（单字"好"在这些模式中不匹配）
+CONFIRM_PATTERNS = {"好的", "好吧", "好了", "好的吧", "好的好的", "好啊", "好啦", "好嘞", "好滴"}
+
+# 否定词（前 3 字内出现则抵消该情感词）
 NEGATORS = {"不", "没", "别"}
 
 
@@ -98,14 +129,19 @@ def _word_boundary_match(text: str, word: str) -> bool:
         # 至少一侧是边界（非中文/开头/结尾）
         if not is_cjk_before or not is_cjk_after:
             # 特别规则：单字"好"后面跟常见的负向关联字时不匹配
-            # 如"好累"中的"好"（"累"是负向词）
             if word == "好" and is_cjk_after and after in ("累", "烦", "气", "难", "哭", "惨", "痛", "晕"):
                 idx = text.find(word, idx + 1)
                 continue
-            # 特别规则：单字"好"在"你好"中作为问候语不匹配
-            if word == "好" and is_cjk_before and before == "你":
-                idx = text.find(word, idx + 1)
-                continue
+            # 特别规则：单字"好"在问候语/确认语中不匹配
+            if word == "好":
+                # 检查是否在问候语模式中
+                for pat in GREETING_PATTERNS:
+                    if pat in text:
+                        return False
+                # 检查是否在确认语模式中
+                for pat in CONFIRM_PATTERNS:
+                    if pat in text:
+                        return False
             return True
         idx = text.find(word, idx + 1)
     return False
@@ -119,13 +155,16 @@ def _has_negator_before(text: str, match_pos: int) -> bool:
 
 
 def rule_sentiment(text: str) -> float:
-    """词典规则打分（V2 增强版）：-1 ~ 1。
+    """词典规则打分（V3 优化版）：-1 ~ 1。
     
     增强特性：
     - 词边界匹配避免子串误判
-    - 否定词感知（前 3 字内出现"不/没/别"时反转极性）
+    - 否定词感知（前 3 字内出现"不/没/别"时抵消）
     - 多词/长词优先匹配
-    - 情感强度校准（长度调节 + 密度调节）
+    - 情感强度校准（长度调节 + 密度调节 + 长句分段）
+    - 问候语/确认语豁免
+    - 表情符号情感支持
+    - 网络用语/口语情感词扩展
     """
     if not text or not text.strip():
         return 0.0
@@ -166,27 +205,53 @@ def rule_sentiment(text: str) -> float:
     _find_matches(POS_SHORT, is_short=True)
     _find_matches(NEG_SHORT, is_short=True)
 
-    total = pos_score + neg_score
-    if total == 0:
-        # 无情感词：随机微幅波动（-0.15 ~ 0.15），避免全零
-        return round(random.uniform(-0.15, 0.15), 3)
+    # --- 表情符号情感 ---
+    emoji_score = 0.0
+    for ch in text:
+        if ch in EMOJI_MAP:
+            emoji_score += EMOJI_MAP[ch]
 
-    # 基础分数
-    raw = (pos_score - neg_score) / total
+    total = pos_score + neg_score + abs(emoji_score)
+
+    # 表情符号单独处理：如果只有表情符号没有文字情感词
+    if total == 0:
+        if emoji_score != 0:
+            # 只有表情符号，收缩到 ±0.6
+            raw = max(-0.6, min(0.6, emoji_score))
+        else:
+            # 无情感词：随机微幅波动（-0.15 ~ 0.15），避免全零
+            return round(random.uniform(-0.15, 0.15), 3)
+        return round(raw, 3)
+
+    # 基础分数（融合表情符号）
+    raw = (pos_score - neg_score + emoji_score) / total
+
+    # 表情符号弱化：如果文字情感贡献很少（<0.5），以表情符号为主时上限0.6
+    if pos_score + neg_score < 0.5 and abs(emoji_score) > 0:
+        raw = max(-0.6, min(0.6, raw))
 
     # --- 情感强度校准 ---
-    # 1) 情感词数量饱和：只有1个情感词时，分数不应饱和到±1.0
+    # 1) 情感词数量饱和
     if total <= 1.5:
         raw = raw * 0.65
     elif total <= 2.5:
         raw = raw * 0.85
-    # 2) 短句拉伸：短消息（<=4字）若有情感词，强度放大
+    # 2) 短句拉伸
     if len(text) <= 4 and total > 0:
         raw = raw * 1.3
-    # 3) 长句压缩：长消息（>10字）情感摊薄
+    # 3) 长句压缩：超过30字的长句，按情感簇分段
     if len(text) > 10:
         raw = raw * 0.85
-    # 4) 情感密度校准：如果情感词占比高，增强
+    if len(text) > 30:
+        # 长文本：检测是否有连续的情感簇（连续3个词以上有情感词）
+        # 如果有，情感应该更强，而不是被稀释
+        words_only = text.replace(" ", "").replace("　", "")
+        # 粗略估计情感词密度：如果>20%且有情感词，不压缩太狠
+        if total > 0 and total / len(words_only) > 0.15:
+            raw = raw * 0.95  # 少压缩一点
+        else:
+            raw = raw * 0.75  # 多压缩一点
+    # 4) 情感密度校准
     density = total / max(len(text), 1)
     if density > 0.3:
         raw = raw * 1.15
