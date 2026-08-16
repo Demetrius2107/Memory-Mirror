@@ -1,12 +1,21 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_all
+
+datas = [('backend', 'backend'), ('ui', 'ui'), ('data', 'data'), ('.venv/Lib/site-packages/jieba', 'jieba')]
+binaries = []
+hiddenimports = ['backend.app.main', 'uvicorn', 'uvicorn.logging', 'uvicorn.loops', 'uvicorn.loops.auto', 'uvicorn.protocols', 'uvicorn.protocols.http.auto', 'uvicorn.protocols.websockets.auto', 'jieba', 'jieba.posseg', 'httpx', 'numpy', 'chromadb', 'sqlite3', 'pydantic', 'sse_starlette']
+tmp_ret = collect_all('chromadb')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('jieba')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
-    ['run_memorymirror.py'],
+    ['F:/PersonalProject-Demetrius/MemoryMirror/run_memorymirror.py'],
     pathex=[],
-    binaries=[],
-    datas=[('ui', 'ui'), ('data/demo.db', 'data'), ('data/faiss_index.bin', 'data'), ('data/faiss_meta.jsonl', 'data'), ('backend', 'backend')],
-    hiddenimports=['uvicorn', 'uvicorn.logging', 'uvicorn.loops.auto', 'uvicorn.protocols.http.auto', 'uvicorn.protocols.websocket.auto', 'uvicorn.middleware.asgi2', 'uvicorn.middleware.wsgi', 'uvicorn.lifespan.on', 'fastapi', 'pydantic', 'jieba', 'jieba.posseg', 'jieba.analyse', 'faiss', 'numpy', 'multipart', 'sse_starlette', 'starlette', 'starlette.routing', 'starlette.middleware', 'starlette.staticfiles', 'websockets'],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

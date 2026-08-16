@@ -1,694 +1,414 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>记忆镜像 MemoryMirror</title>
-  <style>
-    * { box-sizing: border-box; }
-    body { font-family: system-ui, "Microsoft YaHei", sans-serif; margin: 0; background: #f5f6f8; color: #1f2328; }
-    header { background: #fff; border-bottom: 1px solid #e5e7eb; padding: 10px 24px; display: flex; align-items: center; gap: 24px; position: sticky; top: 0; z-index: 10; }
-    header h1 { font-size: 16px; margin: 0; }
-    header h1 small { color: #888; font-weight: normal; }
-    nav button { border: none; background: none; padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 14px; color: #555; }
-    nav button.active { background: #e8f0fe; color: #1677ff; font-weight: 600; }
-    main { max-width: 980px; margin: 20px auto; padding: 0 16px; }
-    .view { display: none; }
-    .view.active { display: block; }
-    .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px 20px; margin: 12px 0; }
-    .card h2 { margin: 0 0 12px; font-size: 15px; }
-    label { display: block; margin: 10px 0 4px; font-size: 13px; color: #555; }
-    input[type=text], input[type=file] { width: 100%; padding: 8px 10px; border: 1px solid #d0d5dd; border-radius: 6px; font-size: 14px; }
-    input[type=text] { margin-bottom: 4px; }
-    button { padding: 8px 18px; border: none; border-radius: 6px; background: #1677ff; color: #fff; cursor: pointer; font-size: 14px; margin: 6px 6px 6px 0; }
-    button.ghost { background: #fff; color: #1677ff; border: 1px solid #1677ff; }
-    .progress { height: 10px; background: #eee; border-radius: 5px; overflow: hidden; margin: 10px 0 6px; }
-    .progress > div { height: 100%; background: #1677ff; width: 0; transition: width .3s; }
-    .msg { font-size: 13px; color: #666; min-height: 18px; }
-    .msg.ok { color: #16a34a; }
-    .msg.err { color: #dc2626; }
-    table { width: 100%; border-collapse: collapse; font-size: 14px; }
-    th, td { padding: 8px 10px; border-bottom: 1px solid #f0f0f0; text-align: left; }
-    th { color: #888; font-weight: 500; font-size: 13px; }
-    tbody tr { cursor: pointer; }
-    tbody tr:hover { background: #f8faff; }
-    .bar { display: inline-block; background: #1677ff; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
-    .hit { padding: 10px; border: 1px solid #eee; border-radius: 8px; margin: 8px 0; font-size: 14px; }
-    .hit .meta { font-size: 12px; color: #888; margin-top: 6px; }
-    .badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; background: #f0f0f0; color: #555; margin-right: 6px; }
-    .hint { font-size: 12px; color: #999; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MemoryMirror</title>
+<style>
+/* ===== Reset & Variables ===== */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0f0f0f;
+  --bg-card:#1a1a1a;
+  --bg-input:#1f1f1f;
+  --bg-hover:#262626;
+  --bg-rail:#0a0a0a;
+  --border:rgba(255,255,255,0.06);
+  --border-input:rgba(255,255,255,0.08);
+  --text:#e5e5e5;
+  --text-dim:#888888;
+  --text-bright:#ffffff;
+  --accent:#818cf8;
+  --accent-hover:#6366f1;
+  --accent-subtle:rgba(129,140,248,0.1);
+  --green:#34d399;
+  --red:#f87171;
+  --radius:12px;
+  --radius-btn:8px;
+  --radius-input:6px;
+  --font:system-ui,-apple-system,'Microsoft YaHei','PingFang SC','Inter',sans-serif;
+  --shadow:0 1px 3px rgba(0,0,0,0.3);
+}
+body{font-family:var(--font);background:var(--bg);color:var(--text);overflow:hidden;height:100vh;font-size:14px;line-height:1.5}
+::-webkit-scrollbar{width:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.06);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,0.12)}
+
+/* ===== Layout ===== */
+#app{display:flex;height:100vh;width:100vw}
+.rail{width:68px;flex-shrink:0;background:var(--bg-rail);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;padding:16px 0 12px;z-index:20}
+.rail-logo{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#818cf8,#34d399);display:flex;align-items:center;justify-content:center;font-size:17px;margin-bottom:20px;cursor:default;flex-shrink:0;box-shadow:0 0 16px rgba(129,140,248,0.15)}
+.rail-items{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;width:100%;padding:0 12px}
+.rail-item{position:relative;width:44px;height:44px;border-radius:var(--radius-btn);display:flex;align-items:center;justify-content:center;border:none;background:transparent;color:var(--text-dim);cursor:pointer;transition:all 0.15s}
+.rail-item svg{width:22px;height:22px;stroke:currentColor;stroke-width:1.8;fill:none}
+.rail-item:hover{background:var(--bg-hover);color:var(--text)}
+.rail-item.active{color:var(--accent);background:var(--accent-subtle)}
+.rail-item.active::before{content:'';position:absolute;left:-12px;top:50%;transform:translateY(-50%);width:3px;height:20px;border-radius:0 3px 3px 0;background:var(--accent)}
+.rail-item .tip{position:absolute;left:52px;top:50%;transform:translateY(-50%);background:#1a1a1a;color:var(--text-bright);padding:4px 10px;border-radius:5px;font-size:12px;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity 0.15s;z-index:100;border:1px solid var(--border);font-weight:400}
+.rail-item:hover .tip{opacity:1}
+.rail-spacer{flex:1}
+.rail-bottom{display:flex;flex-direction:column;align-items:center;gap:4px;width:100%;padding:0 12px}
+
+/* ===== Content Area ===== */
+.content{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+.content-bar{display:flex;align-items:center;justify-content:space-between;padding:10px 24px;border-bottom:1px solid var(--border);flex-shrink:0;height:48px}
+.content-bar .title{font-size:14px;font-weight:500;color:var(--text-bright)}
+.content-bar .status{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text-dim)}
+.content-bar .status .dot{width:6px;height:6px;border-radius:50%;background:var(--green)}
+.content-body{flex:1;overflow-y:auto;padding:28px 24px;display:flex;justify-content:center}
+.content-inner{width:100%;max-width:680px}
+.view{display:none;animation:fadeIn 0.25s ease}
+.view.active{display:block}
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+
+/* ===== Page Header ===== */
+.page-header{margin-bottom:24px}
+.page-header h1{font-size:20px;font-weight:600;color:var(--text-bright);margin-bottom:4px}
+.page-header p{font-size:13px;color:var(--text-dim);line-height:1.5}
+
+/* ===== Card ===== */
+.card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:16px;box-shadow:var(--shadow)}
+.card:last-child{margin-bottom:0}
+.card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--border)}
+.card-title{font-size:13px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.4px}
+.card-title .count{color:var(--text-bright);font-weight:600;margin-left:4px}
+
+/* ===== Form ===== */
+.form-group{margin-bottom:12px}
+.form-group:last-child{margin-bottom:0}
+.form-label{display:block;font-size:12px;color:var(--text-dim);margin-bottom:4px;font-weight:500}
+.form-input,.form-select{width:100%;padding:9px 12px;background:var(--bg-input);border:1px solid var(--border-input);border-radius:var(--radius-input);color:var(--text);font-size:14px;font-family:var(--font);outline:none;transition:all 0.15s;box-shadow:inset 0 1px 2px rgba(0,0,0,0.2)}
+.form-input:focus,.form-select:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(129,140,248,0.15),inset 0 1px 2px rgba(0,0,0,0.2)}
+.form-input::placeholder{color:var(--text-dim);opacity:0.4}
+.form-select{cursor:pointer;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%23888888'%3E%3Cpath d='M2 4l4 4 4-4'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;padding-right:30px}
+.form-select option{background:var(--bg-input);color:var(--text)}
+.form-hint{font-size:12px;color:var(--text-dim);opacity:0.5;margin-top:3px;line-height:1.5}
+.form-row{display:flex;gap:8px;align-items:center}
+.form-row .form-input{flex:1}
+
+/* ===== File Picker ===== */
+.file-picker{display:flex;gap:6px;align-items:center}
+.file-picker .file-btn{display:inline-flex;align-items:center;gap:5px;padding:7px 14px;background:var(--bg-input);border:1px solid var(--border-input);border-radius:var(--radius-btn);cursor:pointer;font-size:13px;color:var(--text-dim);transition:all 0.15s;flex-shrink:0;font-family:var(--font)}
+.file-picker .file-btn:hover{background:var(--bg-hover);color:var(--text)}
+.file-picker .file-btn input[type=file]{display:none}
+.file-picker .file-status{flex:1;padding:7px 12px;background:var(--bg-input);border:1px solid var(--border-input);border-radius:var(--radius-input);font-size:13px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-height:36px;display:flex;align-items:center}
+
+/* ===== Buttons ===== */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:9px 20px;border:none;border-radius:var(--radius-btn);font-size:14px;font-weight:500;font-family:var(--font);cursor:pointer;transition:all 0.12s;color:var(--text-bright);background:linear-gradient(135deg,#818cf8,#6366f1);box-shadow:0 1px 3px rgba(0,0,0,0.2)}
+.btn:hover{transform:translateY(-1px);box-shadow:0 3px 8px rgba(99,102,241,0.25)}
+.btn:active{transform:translateY(0)}
+.btn-ghost{background:transparent;box-shadow:none;color:var(--text-dim);border:1px solid var(--border);background:var(--bg-input)}
+.btn-ghost:hover{background:var(--bg-hover);color:var(--text);transform:translateY(-1px);box-shadow:0 2px 6px rgba(0,0,0,0.2)}
+.btn-sm{padding:6px 14px;font-size:13px}
+.btn-group{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+
+/* ===== Status ===== */
+.msg{font-size:13px;color:var(--text-dim);min-height:18px;margin-top:6px}
+.msg.ok{color:var(--green)}
+.msg.err{color:var(--red)}
+.progress{height:3px;background:rgba(255,255,255,0.04);border-radius:2px;overflow:hidden;margin:8px 0 4px}
+.progress-bar{height:100%;background:linear-gradient(90deg,var(--accent),var(--green));width:0;transition:width 0.3s;border-radius:2px}
+
+/* ===== Table ===== */
+table{width:100%;border-collapse:collapse;font-size:14px}
+th{padding:8px 10px;color:var(--text-dim);font-weight:500;font-size:12px;text-align:left;border-bottom:1px solid var(--border);letter-spacing:0.3px}
+td{padding:8px 10px;border-bottom:1px solid rgba(255,255,255,0.03)}
+tr{cursor:pointer;transition:all 0.12s;border-radius:4px}
+tr:hover{background:var(--bg-hover)}
+.tag{display:inline-block;padding:2px 10px;border-radius:20px;font-size:12px;font-weight:500;background:var(--accent-subtle);color:var(--accent)}
+.tag-green{background:rgba(52,211,153,0.1);color:var(--green)}
+.tag-red{background:rgba(248,113,113,0.1);color:var(--red)}
+.tag-orange{background:rgba(251,191,36,0.1);color:#fbbf24}
+
+/* ===== Hit card ===== */
+.hit{padding:12px 16px;background:var(--bg-input);border:1px solid var(--border);border-radius:10px;margin:6px 0}
+.hit-content{font-size:14px;line-height:1.6}
+.hit-meta{font-size:12px;color:var(--text-dim);margin-top:4px}
+
+/* ===== Chat ===== */
+.chat-box{height:300px;overflow-y:auto;background:var(--bg-input);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:8px}
+.chat-bubble{margin-bottom:8px;padding:8px 14px;border-radius:10px;max-width:78%}
+.chat-bubble.user{background:var(--accent-subtle);margin-left:auto;border-bottom-right-radius:2px}
+.chat-bubble.ai{background:rgba(255,255,255,0.04);margin-right:auto;border-bottom-left-radius:2px}
+.chat-bubble .role{font-size:11px;font-weight:600;color:var(--text-dim);margin-bottom:2px;letter-spacing:0.5px}
+.chat-bubble .text{font-size:14px;line-height:1.6;white-space:pre-wrap;font-family:inherit}
+
+/* ===== Chart ===== */
+.chart-box{height:180px;margin-top:4px}
+
+/* ===== Word Cloud ===== */
+.word-cloud{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;padding:4px 0}
+
+/* ===== Stepper ===== */
+.stepper{display:flex;align-items:center;gap:10px;margin-bottom:16px;padding:12px 16px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius)}
+.step{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-dim);white-space:nowrap}
+.step .num{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;background:var(--bg-hover);color:var(--text-dim);flex-shrink:0}
+.step.done .num{background:var(--green);color:#fff}
+.step.active .num{background:var(--accent);color:#fff}
+.step .line{width:32px;height:1px;background:var(--border);flex-shrink:0}
+
+/* ===== Result box ===== */
+.result-box{padding:8px 12px;background:var(--bg-input);border:1px solid var(--border);border-radius:8px;font-size:13px;font-family:inherit;margin-top:6px;max-height:120px;overflow-y:auto;line-height:1.6;white-space:pre-wrap}
+
+/* ===== Settings grid ===== */
+.settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.settings-full{grid-column:1/-1}
+
+/* ===== Responsive ===== */
+@media(max-width:768px){.content-body{padding:20px 16px}}
+</style>
 </head>
 <body>
-<header>
-  <h1>🪞 记忆镜像 <small>MemoryMirror · 本地隐私优先</small></h1>
-  <nav>
-    <button class="tab active" data-view="wizard">数据接入</button>
-    <button class="tab" data-view="contacts">联系人</button>
-    <button class="tab" data-view="search">智能检索</button>
-    <button class="tab" data-view="dashboard">仪表盘</button>
-    <button class="tab" data-view="chat">AI问答</button>
-    <button class="tab" data-view="settings">⚙设置</button>
+<div id="app">
+  <!-- ===== Navigation Rail ===== -->
+  <nav class="rail">
+    <div class="rail-logo">🪞</div>
+    <div class="rail-items">
+      <button class="rail-item active" data-view="wizard">
+        <svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/><path d="M5 5l14 14M19 5l-14 14"/></svg>
+        <span class="tip">数据接入</span>
+      </button>
+      <button class="rail-item" data-view="contacts">
+        <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.5 3-6 6-6s6 2.5 6 6"/><circle cx="17" cy="7" r="3"/><path d="M15 12c2 0 5 1.5 5 4.5"/></svg>
+        <span class="tip">联系人</span>
+      </button>
+      <button class="rail-item" data-view="search">
+        <svg viewBox="0 0 24 24"><circle cx="10" cy="10" r="6.5"/><path d="M15 15l5 5"/></svg>
+        <span class="tip">智能检索</span>
+      </button>
+      <button class="rail-item" data-view="dashboard">
+        <svg viewBox="0 0 24 24"><rect x="3" y="12" width="5" height="9" rx="1.5"/><rect x="10" y="7" width="5" height="14" rx="1.5"/><rect x="17" y="3" width="5" height="18" rx="1.5"/></svg>
+        <span class="tip">仪表盘</span>
+      </button>
+      <button class="rail-item" data-view="chat">
+        <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 11-16-5.5L3 4l3.5.5A9 9 0 0121 12z"/></svg>
+        <span class="tip">AI问答</span>
+      </button>
+    </div>
+    <div class="rail-spacer"></div>
+    <div class="rail-bottom">
+      <button class="rail-item" data-view="settings">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5.5 5.5l2 2M16.5 16.5l2 2M5.5 18.5l2-2M16.5 7.5l2-2"/></svg>
+        <span class="tip">设置</span>
+      </button>
+    </div>
   </nav>
-</header>
 
-<main>
-  <!-- ============ 视图 1：数据接入向导 ============ -->
-  <section id="view-wizard" class="view active">
-    <div class="card">
-      <h2>① 导入数据（WeChatMsg CSV / chatlog JSONL / 通用 CSV）</h2>
-      <label>消息文件（本地选择并上传）</label>
-      <input type="file" id="fMsg" accept=".csv,.jsonl,.json" />
-      <button class="ghost" id="btnUpMsg">上传并填入路径</button>
-      <input type="text" id="pMsg" placeholder="或直接填写消息文件绝对路径（F:/.../messages.csv）" />
-      <label>联系人文件（可选，配对导入备注名，R17）</label>
-      <input type="file" id="fContact" accept=".csv" />
-      <button class="ghost" id="btnUpContact">上传并填入路径</button>
-      <input type="text" id="pContact" placeholder="联系人文件绝对路径（可选）" />
-      <label>群成员文件（可选）</label>
-      <input type="file" id="fMembers" accept=".csv" />
-      <button class="ghost" id="btnUpMembers">上传并填入路径</button>
-      <input type="text" id="pMembers" placeholder="群成员文件绝对路径（可选）" />
-      <div>
-        <button id="btnImport">开始导入</button>
-        <button class="ghost" id="btnDemo">使用演示数据集</button>
+  <!-- ===== Content ===== -->
+  <div class="content">
+    <div class="content-bar">
+      <span class="title" id="pageTitle">数据接入</span>
+      <span class="status"><span class="dot"></span>本地运行</span>
+    </div>
+    <div class="content-body">
+      <div class="content-inner">
+
+        <!-- ===== 数据接入 ===== -->
+        <section id="view-wizard" class="view active">
+          <div class="page-header">
+            <h1>数据接入</h1>
+            <p>扫描微信本地存储，解密聊天记录并导入分析库</p>
+          </div>
+
+          <!-- 步骤指示器 -->
+          <div class="stepper" id="stepIndicator">
+            <div class="step active" id="step1"><span class="num">1</span>扫描账号</div><div class="line"></div>
+            <div class="step" id="step2"><span class="num">2</span>提取密钥</div><div class="line"></div>
+            <div class="step" id="step3"><span class="num">3</span>选择账号</div><div class="line"></div>
+            <div class="step" id="step4"><span class="num">4</span>解密导入</div>
+          </div>
+
+          <!-- 步骤 1 -->
+          <div class="card" id="scanSection">
+            <div class="card-header"><span class="card-title">扫描微信账号</span></div>
+            <p class="form-hint" style="margin-bottom:8px;opacity:0.7">自动扫描 Documents/WeChat Files/ 目录</p>
+            <button class="btn" id="btnScanWeChat">开始扫描</button>
+            <div class="result-box" id="scanResult">点击「开始扫描」查找微信账号…</div>
+          </div>
+
+          <!-- 步骤 2 -->
+          <div class="card" id="keySection" style="display:none">
+            <div class="card-header"><span class="card-title">提取数据库密钥</span></div>
+            <p class="form-hint" style="margin-bottom:8px;opacity:0.7">需要微信正在运行</p>
+            <button class="btn" id="btnExtractKey">提取密钥</button>
+            <div class="result-box" id="keyResult">等待提取密钥…</div>
+          </div>
+
+          <!-- 步骤 3 -->
+          <div class="card" id="contactSection" style="display:none">
+            <div class="card-header"><span class="card-title">选择要解密的账号</span></div>
+            <table>
+              <thead><tr><th>微信账号</th><th>消息库</th><th>联系人库</th><th></th></tr></thead>
+              <tbody id="wechatAccountRows"></tbody>
+            </table>
+          </div>
+
+          <!-- 步骤 4 -->
+          <div class="card" id="decryptSection" style="display:none">
+            <div class="card-header"><span class="card-title">解密与导入</span></div>
+            <div class="progress"><div class="progress-bar" id="decryptProgress"></div></div>
+            <div class="result-box" id="decryptResult" style="max-height:200px">准备解密…</div>
+          </div>
+
+          <!-- 备选方案 -->
+          <div class="card" style="margin-top:24px;border-color:var(--border)">
+            <div class="card-header"><span class="card-title">备选方案：导入已有文件</span></div>
+            <p class="form-hint" style="margin-bottom:10px;opacity:0.7">如果你已有导出的聊天记录 CSV 文件，可直接导入</p>
+            <div class="form-group">
+              <label class="form-label">消息文件路径</label>
+              <div class="form-row">
+                <input class="form-input" id="pMsg" placeholder="F:/path/to/messages.csv" style="font-size:13px">
+                <button class="btn btn-sm" id="btnImportCSV">导入</button>
+              </div>
+            </div>
+            <div class="progress"><div class="progress-bar" id="importBar"></div></div>
+            <p class="msg" id="importMsg"></p>
+            <div class="btn-group">
+              <button class="btn btn-ghost btn-sm" id="btnDemo">演示数据集</button>
+              <button class="btn btn-ghost btn-sm" id="btnIndex">重建索引</button>
+            </div>
+            <div class="progress"><div class="progress-bar" id="indexBar"></div></div>
+            <p class="msg" id="indexMsg"></p>
+          </div>
+        </section>
+
+        <!-- ===== 联系人 ===== -->
+        <section id="view-contacts" class="view">
+          <div class="page-header"><h1>联系人</h1><p>好友与群聊列表</p></div>
+          <div class="card">
+            <div class="card-header"><span class="card-title">搜索</span><span class="tag" id="contactCount">0</span></div>
+            <input class="form-input" id="contactSearch" placeholder="搜索备注名 / 昵称…" style="margin-bottom:10px">
+            <table><thead><tr><th>名称</th><th>类型</th><th>消息数</th><th>最近活跃</th></tr></thead><tbody id="contactRows"></tbody></table>
+          </div>
+          <div class="card" id="detailCard" style="display:none">
+            <div class="card-header"><span class="card-title" id="detailTitle"></span></div>
+            <p class="msg" id="detailStats"></p>
+            <div id="detailMonthly"></div>
+          </div>
+        </section>
+
+        <!-- ===== 智能检索 ===== -->
+        <section id="view-search" class="view">
+          <div class="page-header"><h1>智能检索</h1><p>RAG 语义搜索与范围分析</p></div>
+          <div class="card">
+            <div class="card-header"><span class="card-title">语义检索</span></div>
+            <div class="form-group"><label class="form-label">检索范围</label><select class="form-select" id="ragScope"><option value="">全部数据</option></select></div>
+            <div class="form-row"><input class="form-input" id="ragQuery" placeholder="例如：我们哪一年吵架最多？"><button class="btn" id="btnRag">检索</button></div>
+            <p class="form-hint" style="margin-top:4px">距离越小越相关（0 = 完全匹配）</p>
+            <div id="ragHits"></div>
+          </div>
+          <div class="card">
+            <div class="card-header"><span class="card-title">范围分析</span><span class="tag tag-orange">可并行</span></div>
+            <div class="form-group"><label class="form-label">分析范围</label><select class="form-select" id="anaScope"><option value="">全部数据（全量分析）</option></select></div>
+            <div class="form-group"><label class="form-label">分析问题（可选）</label><input class="form-input" id="anaQuestion" placeholder="例如：我们聊过哪些项目相关的事？"></div>
+            <button class="btn" id="btnAnalyze">发起分析</button>
+            <div id="anaTasks"></div>
+          </div>
+        </section>
+
+        <!-- ===== 仪表盘 ===== -->
+        <section id="view-dashboard" class="view">
+          <div class="page-header"><h1>仪表盘</h1><p>互动与情绪分析</p></div>
+          <div class="card">
+            <div class="card-header"><span class="card-title">分析对象</span></div>
+            <div class="form-row"><select class="form-select" id="dashTalker"></select><button class="btn" id="btnDashLoad">加载</button></div>
+            <p class="form-hint" style="margin-top:4px">月度互动 · 情绪日历 · 情绪趋势 · 高频词云</p>
+          </div>
+          <div class="card"><div class="card-header"><span class="card-title">亲密度曲线</span><span class="tag">月度消息量</span></div><div class="chart-box" id="chartIntimacy"></div></div>
+          <div class="card"><div class="card-header"><span class="card-title">情绪日历</span><span class="tag tag-green">正向</span><span class="tag tag-red" style="margin-left:4px">负向</span></div><div class="chart-box" id="chartEmotion"></div></div>
+          <div class="card"><div class="card-header"><span class="card-title">情绪趋势</span><span class="tag">月度情感均值</span></div><div class="chart-box" id="chartEmoMonth"></div></div>
+          <div class="card"><div class="card-header"><span class="card-title">词云</span><span class="tag">高频词</span></div><div id="chartWords" style="min-height:110px"></div></div>
+        </section>
+
+        <!-- ===== AI 问答 ===== -->
+        <section id="view-chat" class="view">
+          <div class="page-header"><h1>AI 问答</h1><p>基于本地聊天记录，向 AI 提问</p></div>
+          <div class="card">
+            <div class="card-header"><span class="card-title">对话</span><span id="chatStatus" class="msg" style="margin:0;font-size:12px">检测配置中…</span></div>
+            <div class="form-group"><label class="form-label">分析范围</label><select class="form-select" id="chatScope"><option value="">全部数据</option></select></div>
+            <div class="chat-box" id="chatHistory"></div>
+            <div class="form-row"><input class="form-input" id="chatInput" placeholder="问点什么，按 Enter 发送…"><button class="btn" id="btnChatSend">发送</button></div>
+            <p class="form-hint" style="margin-top:4px">本地检索后发给 LLM · 流式输出 · 未配 Key 时显示本地片段</p>
+          </div>
+        </section>
+
+        <!-- ===== 设置 ===== -->
+        <section id="view-settings" class="view">
+          <div class="page-header"><h1>设置</h1><p>API 配置</p></div>
+          <div class="card">
+            <div class="card-header"><span class="card-title">LLM 配置</span></div>
+            <p class="form-hint" style="margin-bottom:10px;opacity:0.7">OpenAI 兼容格式 · 支持 DeepSeek / GPT / GLM / Qwen / Moonshot</p>
+            <div class="settings-grid">
+              <div class="settings-full"><div class="form-group"><label class="form-label">预设模型</label><select class="form-select" id="cfgPreset"><option value="deepseek">DeepSeek（默认）</option><option value="gpt">OpenAI GPT</option><option value="glm">智谱 GLM</option><option value="qwen">通义千问</option><option value="moonshot">Moonshot</option><option value="custom">自定义</option></select></div></div>
+              <div class="settings-full"><div class="form-group"><label class="form-label">API Key</label><input class="form-input" id="cfgApiKey" type="password" placeholder="sk-... 或等效 Key"></div></div>
+              <div><div class="form-group"><label class="form-label">Base URL</label><input class="form-input" id="cfgBaseUrl" type="text" placeholder="https://api.deepseek.com/v1"></div></div>
+              <div><div class="form-group"><label class="form-label">Model</label><input class="form-input" id="cfgModel" type="text" placeholder="deepseek-chat"></div></div>
+            </div>
+            <div class="btn-group"><button class="btn" id="btnCfgSave">保存配置</button><button class="btn btn-ghost" id="btnCfgTest">测试连接</button></div>
+            <div id="cfgMsg" class="msg"></div>
+          </div>
+        </section>
+
       </div>
-      <div class="progress"><div id="importBar"></div></div>
-      <p class="msg" id="importMsg"></p>
     </div>
-    <div class="card">
-      <h2>② 构建向量索引（智能检索前必需）</h2>
-      <button id="btnIndex">重建索引</button>
-      <div class="progress"><div id="indexBar"></div></div>
-      <p class="msg" id="indexMsg"></p>
-    </div>
-  </section>
-
-  <!-- ============ 视图 2：联系人 ============ -->
-  <section id="view-contacts" class="view">
-    <div class="card">
-      <h2>联系人 / 群聊（点击查看详情）</h2>
-      <input type="text" id="contactSearch" placeholder="搜索备注名 / 昵称…" />
-      <table>
-        <thead><tr><th>名称</th><th>类型</th><th>消息数</th><th>最近活跃</th></tr></thead>
-        <tbody id="contactRows"></tbody>
-      </table>
-    </div>
-    <div class="card" id="detailCard" style="display:none">
-      <h2 id="detailTitle"></h2>
-      <p class="msg" id="detailStats"></p>
-      <div id="detailMonthly"></div>
-    </div>
-  </section>
-
-  <!-- ============ 视图 3：智能检索 + 范围分析 ============ -->
-  <section id="view-search" class="view">
-    <div class="card">
-      <h2>RAG 语义检索（本地向量索引）</h2>
-      <label>检索范围</label>
-      <select id="ragScope" style="width:100%;padding:8px;border:1px solid #d0d5dd;border-radius:6px;font-size:14px">
-        <option value="">全部数据</option>
-      </select>
-      <input type="text" id="ragQuery" placeholder="例如：我们哪一年吵架最多？ / 关于项目方案说了什么" />
-      <button id="btnRag">检索</button>
-      <p class="hint">距离越小越相关（0 = 完全匹配）。需先在上方“数据接入”完成导入与索引构建。</p>
-      <div id="ragHits"></div>
-    </div>
-    <div class="card">
-      <h2>范围分析（全量 / 某人 / 某群，可并行）</h2>
-      <label>分析范围</label>
-      <select id="anaScope" style="width:100%;padding:8px;border:1px solid #d0d5dd;border-radius:6px;font-size:14px">
-        <option value="">全部数据（全量分析）</option>
-      </select>
-      <label>分析问题（可选：对该范围做片段检索）</label>
-      <input type="text" id="anaQuestion" placeholder="例如：我们聊过哪些项目相关的事？" />
-      <button id="btnAnalyze">发起分析</button>
-      <p class="hint">每次点击发起一个独立分析任务，可同时并行多个不同范围；结果按任务卡片展示（数据源：解密后入库的数据区）。</p>
-      <div id="anaTasks"></div>
-    </div>
-  </section>
-  <!-- ============ 视图 4：仪表盘（Week 6） ============ -->
-  <section id="view-dashboard" class="view">
-    <div class="card">
-      <h2>仪表盘（选择联系人 / 群）</h2>
-      <select id="dashTalker" style="width:100%;padding:8px;border:1px solid #d0d5dd;border-radius:6px;font-size:14px"></select>
-      <button id="btnDashLoad">加载仪表盘</button>
-      <p class="hint">数据源：stats（月度互动=亲密度曲线）· emotions（日均情感分=情绪日历）· words（高频词=词云）</p>
-    </div>
-    <div class="card"><h2>亲密度曲线（月度消息量）</h2><div id="chartIntimacy" style="height:260px"></div></div>
-    <div class="card"><h2>情绪日历（日均情感分，绿=正向 / 红=负向）</h2><div id="chartEmotion" style="height:220px"></div></div>
-    <div class="card"><h2>情绪趋势（月度情感均值，蓝=正向趋势）</h2><div id="chartEmoMonth" style="height:200px"></div></div>
-    <div class="card"><h2>词云（高频词）</h2><div id="chartWords" style="min-height:160px"></div></div>
-  </section>
-  <!-- ============ 视图 5：AI 问答 ============ -->
-  <section id="view-chat" class="view">
-    <div class="card">
-      <h2>AI 问答（基于本地聊天记录）</h2>
-      <div id="chatStatus" class="msg" style="margin-bottom:8px">（检测 API 配置中…）</div>
-      <select id="chatScope" style="width:100%;padding:8px;border:1px solid #d0d5dd;border-radius:6px;font-size:14px;margin-bottom:8px"></select>
-      <div id="chatHistory" style="height:360px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:8px;padding:12px;background:#fafbfc;margin-bottom:8px"></div>
-      <div style="display:flex;gap:8px">
-        <input id="chatInput" type="text" placeholder="问点什么，按 Enter 发送（例如：我和小李最近关系怎么样？）" style="flex:1;padding:10px;border:1px solid #d0d5dd;border-radius:6px;font-size:14px">
-        <button id="btnChatSend" class="primary">发送</button>
-      </div>
-      <p class="hint">数据在本地检索后发给 LLM，支持流式输出。未配置 API Key 时显示本地检索片段。</p>
-    </div>
-  </section>
-  <!-- ============ 视图 6：设置 ============ -->
-  <section id="view-settings" class="view">
-    <div class="card">
-      <h2>API 配置（OpenAI 兼容格式）</h2>
-      <p class="hint">支持 DeepSeek / GPT / GLM / Qwen / Moonshot 等兼容 OpenAI 接口的模型服务。</p>
-      <label>预设模型</label>
-      <select id="cfgPreset" style="width:100%;padding:8px;border:1px solid #d0d5dd;border-radius:6px;font-size:14px;margin-bottom:8px">
-        <option value="deepseek">DeepSeek（默认）</option>
-        <option value="gpt">OpenAI GPT</option>
-        <option value="glm">智谱 GLM</option>
-        <option value="qwen">通义千问</option>
-        <option value="moonshot">Moonshot</option>
-        <option value="custom">自定义</option>
-      </select>
-      <label>API Key</label>
-      <input id="cfgApiKey" type="password" placeholder="sk-... 或等效 Key" style="width:100%;padding:8px;border:1px solid #d0d5dd;border-radius:6px;font-size:14px;margin-bottom:8px">
-      <label>Base URL</label>
-      <input id="cfgBaseUrl" type="text" placeholder="https://api.deepseek.com/v1" style="width:100%;padding:8px;border:1px solid #d0d5dd;border-radius:6px;font-size:14px;margin-bottom:8px">
-      <label>Model</label>
-      <input id="cfgModel" type="text" placeholder="deepseek-chat" style="width:100%;padding:8px;border:1px solid #d0d5dd;border-radius:6px;font-size:14px;margin-bottom:8px">
-      <div style="display:flex;gap:8px;margin-top:8px">
-        <button id="btnCfgSave" class="primary">保存配置</button>
-        <button id="btnCfgTest">测试连接</button>
-      </div>
-      <div id="cfgMsg" class="msg" style="margin-top:8px"></div>
-    </div>
-  </section>
-</main>
-
+  </div>
+</div>
 <script src="vendor/echarts.min.js"></script>
 <script>
-"use strict";
-const $ = (id) => document.getElementById(id);
+"use strict";const $=id=>document.getElementById(id);
+async function api(path,opts={}){const r=await fetch(path,opts);if(!r.ok){let d=r.statusText;try{d=(await r.json()).detail||d}catch(_){}throw new Error(d)}return r.json()}
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmtTs=ts=>ts?new Date(ts*1000).toLocaleString("zh-CN",{hour12:false}):"-";
+const PAGE_TITLES={wizard:"数据接入",contacts:"联系人",search:"智能检索",dashboard:"仪表盘",chat:"AI问答",settings:"设置"};
+document.querySelectorAll(".rail-item").forEach(btn=>{btn.onclick=()=>{document.querySelectorAll(".rail-item").forEach(b=>b.classList.remove("active"));btn.classList.add("active");document.querySelectorAll(".view").forEach(v=>v.classList.remove("active"));const v=btn.dataset.view;$("view-"+v).classList.add("active");$("pageTitle").textContent=PAGE_TITLES[v];if(v==="contacts")loadContacts();if(v==="dashboard")loadDashTalkers();if(v==="search")fillScopes();if(v==="chat"){fillChatScopes();loadChatStatus()}if(v==="settings")loadConfigForm()}});
 
-// ---------- 工具 ----------
-async function api(path, opts = {}) {
-  const r = await fetch(path, opts);
-  if (!r.ok) {
-    let detail = r.statusText;
-    try { detail = (await r.json()).detail || detail; } catch (_) {}
-    throw new Error(detail);
-  }
-  return r.json();
-}
-const escapeHtml = (s) => String(s ?? "").replace(/[&<>"']/g,
-  (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const fmtTs = (ts) => ts ? new Date(ts * 1000).toLocaleString("zh-CN", { hour12: false }) : "-";
+// ===== 微信解密流程 =====
+let scanResult=null,wechatKey=null;
+$("btnScanWeChat").onclick=async()=>{const box=$("scanResult");box.textContent="正在扫描…";try{const r=await api("/api/wechat/scan");scanResult=r.accounts;if(!scanResult||scanResult.length===0){box.textContent="未找到微信账号目录。请确认微信已安装并登录。\n你也可以使用下方的「备选方案」导入 CSV 文件。";return}box.innerHTML=scanResult.map(a=>`📁 ${esc(a.wxid)}${a.has_msg_db?" ✅ 含消息库":" ❌ 无消息库"}`).join("\n");$("step1").classList.remove("active");$("step1").classList.add("done");$("step2").classList.add("active");$("keySection").style.display="block"}catch(e){box.textContent="扫描失败: "+e.message}};
+$("btnExtractKey").onclick=async()=>{const box=$("keyResult");box.textContent="正在提取密钥（需要微信正在运行）…";try{const r=await api("/api/wechat/extract-key");if(!r.success){box.textContent="❌ "+r.error;return}wechatKey=r.key;box.innerHTML=`✅ 密钥提取成功: ${esc(r.masked)}`;$("step2").classList.remove("active");$("step2").classList.add("done");$("step3").classList.add("active");$("contactSection").style.display="block";const tbody=$("wechatAccountRows");tbody.innerHTML=scanResult.filter(a=>a.has_msg_db).map(a=>`<tr><td>${esc(a.wxid)}</td><td><span class="tag">${a.msg_db_path?PathName(a.msg_db_path):"无"}</span></td><td><span class="tag">${a.contact_db_path?"有":"无"}</span></td><td><button class="btn btn-sm" data-wxid="${esc(a.wxid)}" data-db="${esc(a.msg_db_path||"")}">解密</button></td></tr>`).join("");tbody.querySelectorAll("button").forEach(btn=>{btn.onclick=()=>startDecrypt(btn.dataset.wxid,btn.dataset.db)})}catch(e){box.textContent="❌ 提取失败: "+e.message}};
+const PathName=p=>{try{return p.split("/").pop().split("\\").pop()}catch(e){return p}};
+async function startDecrypt(wxid,dbPath){if(!wechatKey||!dbPath){alert("缺少密钥或数据库路径");return}$("step3").classList.remove("active");$("step3").classList.add("done");$("step4").classList.add("active");$("decryptSection").style.display="block";const bar=$("decryptProgress"),box=$("decryptResult");box.textContent=`开始解密 ${wxid}…\n`;try{const outPath=`data/decrypted/${wxid}/message.db`;bar.style.width="30%";box.textContent+=`→ 解密消息数据库…\n`;const r1=await api("/api/wechat/decrypt",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({db_path:dbPath,key:wechatKey,out_path:outPath})});if(!r1.success){box.textContent+=`❌ 消息库解密失败: ${r1.error}\n`;return}box.textContent+=`✅ 消息库解密成功\n`;bar.style.width="60%";box.textContent+=`→ 导入数据到分析库…\n`;await api("/api/import",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:outPath})});box.textContent+=`✅ 数据导入完成\n`;bar.style.width="90%";box.textContent+=`→ 重建向量索引…\n`;try{await api("/api/index",{method:"POST"});box.textContent+=`✅ 索引重建完成\n`}catch(e){box.textContent+=`⚠ 索引重建跳过\n`}bar.style.width="100%";box.textContent+=`\n🎉 ${wxid} 解密导入完成！`;$("step4").classList.remove("active");$("step4").classList.add("done");setTimeout(()=>{bar.style.width="0"},2000)}catch(e){box.textContent+=`❌ 解密流程失败: ${e.message}\n`;bar.style.width="0"}}
 
-// WS 进度订阅：TASKS 最新任务推送（后端 /ws/progress 轮询推送）
-function watchProgress(barId, msgId) {
-  const bar = $(barId), msg = $(msgId);
-  const ws = new WebSocket(`ws://${location.host}/ws/progress`);
-  ws.onmessage = (e) => {
-    const d = JSON.parse(e.data);
-    if (bar) bar.style.width = (d.percent ?? 0) + "%";
-    if (msg) {
-      msg.className = "msg" + (d.type === "error" ? " err" : d.type === "done" ? " ok" : "");
-      msg.textContent = d.message || d.phase_label || d.type;
-    }
-  };
-  return ws;
-}
+// ===== 备选：CSV 导入 =====
+function watchProgress(barId,msgId){const bar=$(barId),msg=$(msgId);const ws=new WebSocket(`ws://${location.host}/ws/progress`);ws.onmessage=e=>{const d=JSON.parse(e.data);if(bar)bar.style.width=(d.percent??0)+"%";if(msg){msg.className="msg"+(d.type==="error"?" err":d.type==="done"?" ok":"");msg.textContent=d.message||d.phase_label||d.type}};return ws}
+$("btnImportCSV").onclick=async()=>{const msg=$("importMsg");const path=$("pMsg").value.trim();if(!path){alert("请先填写消息文件路径");return}try{const ws=watchProgress("importBar","importMsg");const res=await api("/api/import",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path})});msg.textContent=`任务已提交: ${res.task_id}`;setTimeout(()=>ws.close(),3000)}catch(e){msg.className="msg err";msg.textContent="导入失败: "+e.message}};
+$("btnDemo").onclick=async()=>{const msg=$("importMsg");try{const r=await api("/api/demo",{method:"POST"});msg.className="msg ok";msg.textContent=r.message+"（请点击「重建索引」）"}catch(e){msg.className="msg err";msg.textContent=e.message}};
+$("btnIndex").onclick=async()=>{const msg=$("indexMsg");try{const ws=watchProgress("indexBar","indexMsg");const res=await api("/api/index",{method:"POST"});msg.textContent=`索引任务已提交: ${res.task_id}`;setTimeout(()=>ws.close(),3000)}catch(e){msg.className="msg err";msg.textContent="索引失败: "+e.message}};
 
-// 文件上传 → 返回本地路径
-async function uploadFile(fileInput, pathInput) {
-  const f = $(fileInput).files[0];
-  if (!f) { alert("请先选择文件"); return; }
-  const fd = new FormData();
-  fd.append("file", f);
-  const res = await api("/api/upload", { method: "POST", body: fd });
-  $(pathInput).value = res.path;
-}
+// ===== 联系人 =====
+let allContacts=[];async function loadContacts(){try{allContacts=(await api("/api/contacts")).items;renderContacts($("contactSearch").value.trim())}catch(e){$("contactRows").innerHTML=`<tr><td colspan="4">加载失败: ${esc(e.message)}</td></tr>`}}
+function renderContacts(kw){const rows=allContacts.filter(c=>!kw||(c.display_name||"").includes(kw));$("contactCount").textContent=rows.length;$("contactRows").innerHTML=rows.length?rows.map(c=>`<tr data-wxid="${esc(c.wxid)}"><td>${esc(c.display_name)}</td><td><span class="tag ${c.type==='friend'?'tag-green':''}">${esc(c.type)}</span></td><td>${c.message_count}</td><td>${fmtTs(c.last_ts)}</td></tr>`).join(""):`<tr><td colspan="4">暂无数据（请先在「数据接入」导入）</td></tr>`;$("contactRows").querySelectorAll("tr[data-wxid]").forEach(tr=>{tr.onclick=()=>showDetail(tr.dataset.wxid)})}
+$("contactSearch").oninput=e=>renderContacts(e.target.value.trim());
+async function showDetail(wxid){const card=$("detailCard");card.style.display="block";const d=await api(`/api/talker/${encodeURIComponent(wxid)}/stats`);const c=allContacts.find(x=>x.wxid===wxid);$("detailTitle").textContent=(c?c.display_name:wxid)+" 的消息统计";$("detailStats").textContent=`消息总数 ${d.total} · 最近活跃 ${fmtTs(d.last_ts)}`;const max=Math.max(1,...d.monthly.map(m=>m.count));$("detailMonthly").innerHTML=d.monthly.map(m=>`<div style="margin:3px 0;font-size:13px"><span style="display:inline-block;width:50px;color:var(--text-dim)">${m.month}</span><span style="display:inline-block;height:8px;border-radius:4px;background:var(--accent);width:${(m.count/max*140)}px;vertical-align:middle;margin-right:5px"></span><span>${m.count}</span></div>`).join("")}
 
-// ---------- 视图切换 ----------
-document.querySelectorAll(".tab").forEach((btn) => {
-  btn.onclick = () => {
-    document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
-    btn.classList.add("active");
-    document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
-    $("view-" + btn.dataset.view).classList.add("active");
-    if (btn.dataset.view === "contacts") loadContacts();
-    if (btn.dataset.view === "dashboard") loadDashTalkers();
-    if (btn.dataset.view === "search") fillScopes();
-    if (btn.dataset.view === "chat") { fillChatScopes(); loadChatStatus(); }
-    if (btn.dataset.view === "settings") loadConfigForm();
-  };
-});
+// ===== 检索 =====
+$("btnRag").onclick=async()=>{const q=$("ragQuery").value.trim(),box=$("ragHits");if(!q){alert("请输入问题");return}box.innerHTML="检索中…";try{const r=await api(`/api/rag/search?q=${encodeURIComponent(q)}&top_k=10${$("ragScope").value?"&scope_talker="+encodeURIComponent($("ragScope").value):""}`);box.innerHTML=r.hits.length?r.hits.map(h=>{const m=h.metadata||{};return`<div class="hit"><div class="hit-content">${esc(h.content)}</div><div class="hit-meta">相关度 ${(1-h.distance).toFixed(2)} · ${esc(m.talker||"")} · ${esc(m.year_month||"")}</div></div>`}).join(""):`<p class="form-hint" style="margin-top:6px">无结果（请确认已构建索引）</p>`}catch(e){box.innerHTML=`<p class="msg err">检索失败: ${esc(e.message)}</p>`}};$("ragQuery").addEventListener("keydown",e=>{if(e.key==="Enter")$("btnRag").click()});
+let scopeItems=[];async function fillScopes(){try{if(!scopeItems.length)scopeItems=(await api("/api/contacts")).items;const fill=(selId,allLabel)=>{const sel=$(selId),cur=sel.value;const g=scopeItems.filter(c=>c.type==="group"),f=scopeItems.filter(c=>c.type==="friend");sel.innerHTML=`<option value="">${allLabel}</option>`+g.map(c=>`<option value="${esc(c.wxid)}">👥 ${esc(c.display_name)}</option>`).join("")+f.map(c=>`<option value="${esc(c.wxid)}">👤 ${esc(c.display_name)}</option>`).join("");if([...sel.options].some(o=>o.value===cur))sel.value=cur};fill("ragScope","全部数据");fill("anaScope","全部数据（全量分析）")}catch(e){}}
+$("btnAnalyze").onclick=async()=>{const scope=$("anaScope").value,question=$("anaQuestion").value.trim(),box=$("anaTasks");const label=$("anaScope").selectedOptions[0]?.textContent||"全部数据";let res;try{res=await api("/api/analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({scope_talker:scope||null,question:question||null,top_k:8})})}catch(e){box.insertAdjacentHTML("afterbegin",`<div class="hit"><b>分析发起失败</b>: ${esc(e.message)}</div>`);return}const card=document.createElement("div");card.className="hit";card.innerHTML=`<b>${esc(label)}</b> <span class="tag">${esc(res.task_id)}</span> <span class="msg">排队中…</span><div class="anaBody"></div>`;box.insertAdjacentElement("afterbegin",card);const timer=setInterval(async()=>{try{const t=await api(`/api/tasks/${res.task_id}`);const msgEl=card.querySelector(".msg");if(t.status==="done"){clearInterval(timer);msgEl.className="msg ok";msgEl.textContent="完成";renderAnaResult(card,t.result)}else if(t.status==="error"){clearInterval(timer);msgEl.className="msg err";msgEl.textContent="失败: "+(t.message||"")}else{msgEl.textContent=t.message||t.phase||"分析中…"}}catch(e){clearInterval(timer)}},1000)};
+function renderAnaResult(card,res){const s=(res&&res.stats)||{},body=card.querySelector(".anaBody");const months=(s.monthly||[]).slice(-12),maxM=Math.max(1,...months.map(m=>m.count));body.innerHTML=`<div style="margin-top:6px;font-size:13px">消息总数 <b>${s.total??"-"}</b> · 时间 ${s.first_ts?fmtTs(s.first_ts).slice(0,10):"-"} ~ ${s.last_ts?fmtTs(s.last_ts).slice(0,10):"-"} · 情绪均值 <b>${s.avg_emotion??"-"}</b><br>高频词: ${(s.top_words||[]).slice(0,8).map(w=>`<span class="tag">${esc(w.word)}×${w.count}</span>`).join(" ")||"-"}</div>`+`<div style="margin-top:6px">${months.map(m=>`<div style="margin:2px 0;font-size:12px"><span style="display:inline-block;width:45px;color:var(--text-dim)">${m.month}</span><span style="display:inline-block;height:6px;border-radius:2px;background:var(--accent);width:${(m.count/maxM*100)}px;vertical-align:middle;margin-right:4px"></span><span>${m.count}</span></div>`).join("")}</div>`;const hits=(res&&res.hits)||[];if(hits.length)body.insertAdjacentHTML("beforeend",`<div style="margin-top:4px"><b>相关片段（${hits.length}）</b></div>`+hits.map(h=>`<div style="margin:3px 0;font-size:12px;color:var(--text-dim)">${esc(h.content)} <span style="opacity:0.5">${esc((h.metadata||{}).talker||"")} ${esc((h.metadata||{}).year_month||"")}</span></div>`).join(""))}
 
-// ---------- 向导 ----------
-$("btnUpMsg").onclick = () => uploadFile("fMsg", "pMsg");
-$("btnUpContact").onclick = () => uploadFile("fContact", "pContact");
-$("btnUpMembers").onclick = () => uploadFile("fMembers", "pMembers");
+// ===== 仪表盘 =====
+let dashCharts={};function renderIntimacy(m){const el=$("chartIntimacy");if(!dashCharts.intimacy)dashCharts.intimacy=echarts.init(el);dashCharts.intimacy.setOption({tooltip:{trigger:"axis",backgroundColor:"rgba(15,15,15,0.9)",borderColor:"rgba(255,255,255,0.06)",textStyle:{color:"#e5e5e5"}},grid:{left:34,right:10,top:10,bottom:18},xAxis:{type:"category",data:m.map(x=>x.month),axisLabel:{fontSize:10,color:"#888888"},axisLine:{lineStyle:{color:"rgba(255,255,255,0.06)"}}},yAxis:{type:"value",splitLine:{lineStyle:{color:"rgba(255,255,255,0.03)",type:"dashed"}},axisLabel:{color:"#888888",fontSize:10}},series:[{type:"line",smooth:true,areaStyle:{opacity:0.08,color:"rgba(129,140,248,0.3)"},data:m.map(x=>x.count),lineStyle:{color:"#818cf8"},itemStyle:{color:"#818cf8"}}]})}
+function renderEmotion(d){const el=$("chartEmotion");if(!dashCharts.emotion)dashCharts.emotion=echarts.init(el);if(!d.length){dashCharts.emotion.clear();return}const s=d[0].day.slice(0,7),e=d[d.length-1].day.slice(0,7);dashCharts.emotion.setOption({tooltip:{backgroundColor:"rgba(15,15,15,0.9)",borderColor:"rgba(255,255,255,0.06)",textStyle:{color:"#e5e5e5"}},visualMap:{min:-1,max:1,calculable:true,orient:"horizontal",left:"center",bottom:0,inRange:{color:["#f87171","#0f0f0f","#34d399"]},textStyle:{color:"#888888"}},calendar:{range:[s,e],cellSize:["auto",13],top:14,bottom:45,splitLine:{lineStyle:{color:"rgba(255,255,255,0.06)"}},dayLabel:{color:"#888888",fontSize:10},monthLabel:{color:"#888888",fontSize:10}},series:[{type:"heatmap",coordinateSystem:"calendar",data:d.map(x=>[x.day,x.avg])}]})}
+function renderWords(w){const el=$("chartWords");if(!w.length){el.innerHTML='<p class="form-hint">无文本消息</p>';return}const max=Math.max(1,...w.map(x=>x.count));el.innerHTML=`<div class="word-cloud">`+w.map((x,i)=>{const fs=12+Math.round((x.count/max)*20),h=(i*47+240)%360;return`<span style="font-size:${fs}px;color:hsl(${h},65%,60%);line-height:1.5">${esc(x.word)}</span>`}).join("")+`</div>`}
+function renderEmoMonth(m){const el=$("chartEmoMonth");if(!dashCharts.emoMonth)dashCharts.emoMonth=echarts.init(el);if(!m||!m.length){dashCharts.emoMonth.clear();el.innerHTML='<p class="form-hint">暂无情绪趋势数据</p>';return}dashCharts.emoMonth.setOption({tooltip:{trigger:"axis",backgroundColor:"rgba(15,15,15,0.9)",borderColor:"rgba(255,255,255,0.06)",textStyle:{color:"#e5e5e5"}},grid:{left:34,right:10,top:10,bottom:22},xAxis:{type:"category",data:m.map(x=>x.month),axisLabel:{fontSize:10,color:"#888888",rotate:40},axisLine:{lineStyle:{color:"rgba(255,255,255,0.06)"}}},yAxis:{type:"value",min:-1,max:1,splitLine:{lineStyle:{color:"rgba(255,255,255,0.03)",type:"dashed"}},axisLabel:{color:"#888888",fontSize:10}},series:[{type:"bar",data:m.map(x=>x.count>0?(x.avg_emo||0):null),itemStyle:{color:p=>p.value>=0?"#34d399":"#f87171",borderRadius:[3,3,0,0]},barWidth:"60%"}]})}
+async function loadDashboard(){const wxid=$("dashTalker").value;if(!wxid){alert("请选择联系人/群");return}try{const[s,e,w,em]=await Promise.all([api(`/api/talker/${encodeURIComponent(wxid)}/stats`),api(`/api/talker/${encodeURIComponent(wxid)}/emotions`),api(`/api/talker/${encodeURIComponent(wxid)}/words`),api(`/api/talker/${encodeURIComponent(wxid)}/emotions/monthly`)]);renderIntimacy(s.monthly||[]);renderEmotion(e.days||[]);renderWords(w.words||[]);renderEmoMonth(em.months||[])}catch(err){alert("仪表盘加载失败: "+err.message)}}
+async function loadDashTalkers(){try{const d=await api("/api/contacts");const sel=$("dashTalker");sel.innerHTML=d.items.map(c=>`<option value="${esc(c.wxid)}">${esc(c.display_name)}（${c.type}）</option>`).join("");if(d.items.length)loadDashboard()}catch(e){}}
+$("btnDashLoad").onclick=loadDashboard;
 
-$("btnImport").onclick = async () => {
-  const msg = $("importMsg");
-  try {
-    const body = { path: $("pMsg").value.trim() };
-    if (!$("pMsg").value.trim()) { alert("请先选择/填写消息文件"); return; }
-    if ($("pContact").value.trim()) body.contact_path = $("pContact").value.trim();
-    if ($("pMembers").value.trim()) body.members_path = $("pMembers").value.trim();
-    const ws = watchProgress("importBar", "importMsg");
-    const res = await api("/api/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    msg.textContent = `任务已提交：${res.task_id}，等待进度推送…`;
-    // 任务完成后关闭 WS（后端推送 done 后 2s 关闭）
-    setTimeout(() => ws.close(), 3000);
-  } catch (e) { msg.className = "msg err"; msg.textContent = "导入失败：" + e.message; }
-};
-
-$("btnDemo").onclick = async () => {
-  const msg = $("importMsg");
-  try {
-    const r = await api("/api/demo", { method: "POST" });
-    msg.className = "msg ok"; msg.textContent = r.message + "（请点击下方“重建索引”）";
-  } catch (e) { msg.className = "msg err"; msg.textContent = e.message; }
-};
-
-$("btnIndex").onclick = async () => {
-  const msg = $("indexMsg");
-  try {
-    const ws = watchProgress("indexBar", "indexMsg");
-    const res = await api("/api/index", { method: "POST" });
-    msg.textContent = `索引任务已提交：${res.task_id}`;
-    setTimeout(() => ws.close(), 3000);
-  } catch (e) { msg.className = "msg err"; msg.textContent = "索引失败：" + e.message; }
-};
-
-// ---------- 联系人 ----------
-let allContacts = [];
-async function loadContacts() {
-  try {
-    allContacts = (await api("/api/contacts")).items;
-    renderContacts($("contactSearch").value.trim());
-  } catch (e) { $("contactRows").innerHTML = `<tr><td colspan="4">加载失败：${escapeHtml(e.message)}</td></tr>`; }
-}
-function renderContacts(kw) {
-  const rows = allContacts.filter((c) => !kw || (c.display_name || "").includes(kw));
-  $("contactRows").innerHTML = rows.length
-    ? rows.map((c) => `<tr data-wxid="${escapeHtml(c.wxid)}">
-        <td>${escapeHtml(c.display_name)}</td>
-        <td><span class="badge">${escapeHtml(c.type)}</span></td>
-        <td>${c.message_count}</td><td>${fmtTs(c.last_ts)}</td></tr>`).join("")
-    : `<tr><td colspan="4">暂无数据（请先在“数据接入”导入）</td></tr>`;
-  $("contactRows").querySelectorAll("tr[data-wxid]").forEach((tr) => {
-    tr.onclick = () => showDetail(tr.dataset.wxid);
-  });
-}
-$("contactSearch").oninput = (e) => renderContacts(e.target.value.trim());
-
-async function showDetail(wxid) {
-  const card = $("detailCard");
-  card.style.display = "block";
-  const d = await api(`/api/talker/${encodeURIComponent(wxid)}/stats`);
-  const c = allContacts.find((x) => x.wxid === wxid);
-  $("detailTitle").textContent = (c ? c.display_name : wxid) + " 的消息统计";
-  $("detailStats").textContent = `消息总数 ${d.total} · 最近活跃 ${fmtTs(d.last_ts)}`;
-  const max = Math.max(1, ...d.monthly.map((m) => m.count));
-  $("detailMonthly").innerHTML = d.monthly.map((m) =>
-    `<div style="margin:4px 0;font-size:13px">
-      <span style="display:inline-block;width:64px;color:#888">${m.month}</span>
-      <span class="bar" style="height:12px;width:${(m.count / max * 200)}px"></span>
-      <span>${m.count}</span></div>`).join("");
-}
-
-// ---------- 检索 ----------
-$("btnRag").onclick = async () => {
-  const q = $("ragQuery").value.trim();
-  const box = $("ragHits");
-  if (!q) { alert("请输入问题"); return; }
-  box.innerHTML = "检索中…";
-  try {
-    const r = await api(`/api/rag/search?q=${encodeURIComponent(q)}&top_k=10${$("ragScope").value ? "&scope_talker=" + encodeURIComponent($("ragScope").value) : ""}`);
-    box.innerHTML = r.hits.length
-      ? r.hits.map((h) => {
-          const m = h.metadata || {};
-          return `<div class="hit">
-            <div>${escapeHtml(h.content)}</div>
-            <div class="meta">相关度 ${(1 - h.distance).toFixed(2)} · ${escapeHtml(m.talker || "")} · ${escapeHtml(m.year_month || "")}</div>
-          </div>`;
-        }).join("")
-      : `<p class="hint">无结果（请确认已构建索引）</p>`;
-  } catch (e) { box.innerHTML = `<p class="msg err">检索失败：${escapeHtml(e.message)}</p>`; }
-};
-$("ragQuery").addEventListener("keydown", (e) => { if (e.key === "Enter") $("btnRag").click(); });
-
-// ---------- 范围分析（全量 / 某人 / 某群，可并行） ----------
-let scopeItems = [];
-async function fillScopes() {
-  try {
-    if (!scopeItems.length) scopeItems = (await api("/api/contacts")).items;
-    const fill = (selId, allLabel) => {
-      const sel = $(selId), cur = sel.value;
-      const groups = scopeItems.filter((c) => c.type === "group");
-      const friends = scopeItems.filter((c) => c.type === "friend");
-      sel.innerHTML = `<option value="">${allLabel}</option>` +
-        groups.map((c) => `<option value="${escapeHtml(c.wxid)}">👥 ${escapeHtml(c.display_name)}</option>`).join("") +
-        friends.map((c) => `<option value="${escapeHtml(c.wxid)}">👤 ${escapeHtml(c.display_name)}</option>`).join("");
-      if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
-    };
-    fill("ragScope", "全部数据");
-    fill("anaScope", "全部数据（全量分析）");
-  } catch (e) { /* 无数据时保持空选项 */ }
-}
-
-$("btnAnalyze").onclick = async () => {
-  const scope = $("anaScope").value;
-  const question = $("anaQuestion").value.trim();
-  const box = $("anaTasks");
-  const label = $("anaScope").selectedOptions[0]?.textContent || "全部数据";
-  let res;
-  try {
-    res = await api("/api/analyze", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ scope_talker: scope || null, question: question || null, top_k: 8 }),
-    });
-  } catch (e) {
-    box.insertAdjacentHTML("afterbegin", `<div class="hit"><b>分析发起失败</b>：${escapeHtml(e.message)}</div>`);
-    return;
-  }
-  const card = document.createElement("div");
-  card.className = "hit";
-  card.innerHTML = `<b>${escapeHtml(label)}</b> <span class="badge">${escapeHtml(res.task_id)}</span> <span class="msg">排队中…</span><div class="anaBody"></div>`;
-  box.insertAdjacentElement("afterbegin", card);
-  const timer = setInterval(async () => {
-    try {
-      const t = await api(`/api/tasks/${res.task_id}`);
-      const msgEl = card.querySelector(".msg");
-      if (t.status === "done") {
-        clearInterval(timer);
-        msgEl.className = "msg ok"; msgEl.textContent = "完成";
-        renderAnaResult(card, t.result);
-      } else if (t.status === "error") {
-        clearInterval(timer);
-        msgEl.className = "msg err"; msgEl.textContent = "失败：" + (t.message || "");
-      } else {
-        msgEl.textContent = t.message || t.phase || "分析中…";
-      }
-    } catch (e) { clearInterval(timer); }
-  }, 1000);
-};
-
-function renderAnaResult(card, res) {
-  const s = (res && res.stats) || {};
-  const body = card.querySelector(".anaBody");
-  const months = (s.monthly || []).slice(-12);
-  const maxM = Math.max(1, ...months.map((m) => m.count));
-  body.innerHTML = `
-    <div style="margin-top:8px;font-size:13px;color:#333">
-      消息总数 <b>${s.total ?? "-"}</b> ·
-      时间 ${s.first_ts ? fmtTs(s.first_ts).slice(0, 10) : "-"} ~ ${s.last_ts ? fmtTs(s.last_ts).slice(0, 10) : "-"} ·
-      情绪均值 <b>${s.avg_emotion ?? "-"}</b><br/>
-      高频词：${(s.top_words || []).slice(0, 8).map((w) => `<span class="badge">${escapeHtml(w.word)}×${w.count}</span>`).join(" ") || "-"}
-      活跃时段：${(s.active_hours || []).map((h) => `${h.hour}:00(${h.count})`).join(" ") || "-"}
-    </div>
-    <div style="margin-top:8px">${months.map((m) => `
-      <div style="margin:2px 0;font-size:12px">
-        <span style="display:inline-block;width:56px;color:#888">${m.month}</span>
-        <span class="bar" style="height:10px;width:${(m.count / maxM * 160)}px"></span><span>${m.count}</span>
-      </div>`).join("")}</div>`;
-  const hits = (res && res.hits) || [];
-  if (hits.length) {
-    body.insertAdjacentHTML("beforeend", `<div style="margin-top:6px"><b>相关片段（${hits.length}）</b></div>` +
-      hits.map((h) => `<div style="margin:4px 0;font-size:12px;color:#555">${escapeHtml(h.content)} <span style="color:#aaa">${escapeHtml((h.metadata || {}).talker || "")} ${escapeHtml((h.metadata || {}).year_month || "")}</span></div>`).join(""));
-  }
-}
-
-// ---------- 仪表盘（Week 6：亲密度曲线 / 情绪日历 / 词云） ----------
-let dashCharts = {};
-function renderIntimacy(monthly) {
-  const el = $("chartIntimacy");
-  if (!dashCharts.intimacy) dashCharts.intimacy = echarts.init(el);
-  dashCharts.intimacy.setOption({
-    tooltip: { trigger: "axis" },
-    grid: { left: 40, right: 16, top: 16, bottom: 24 },
-    xAxis: { type: "category", data: monthly.map((m) => m.month), axisLabel: { fontSize: 11 } },
-    yAxis: { type: "value" },
-    series: [{ type: "line", smooth: true, areaStyle: { opacity: 0.15 }, data: monthly.map((m) => m.count), itemStyle: { color: "#1677ff" } }],
-  });
-}
-function renderEmotion(days) {
-  const el = $("chartEmotion");
-  if (!dashCharts.emotion) dashCharts.emotion = echarts.init(el);
-  if (!days.length) { dashCharts.emotion.clear(); return; }
-  const start = days[0].day.slice(0, 7), end = days[days.length - 1].day.slice(0, 7);
-  dashCharts.emotion.setOption({
-    tooltip: {},
-    visualMap: { min: -1, max: 1, calculable: true, orient: "horizontal", left: "center", bottom: 0, inRange: { color: ["#d94e5d", "#f0f0f0", "#3b8f5a"] } },
-    calendar: { range: [start, end], cellSize: ["auto", 15], top: 20, bottom: 55 },
-    series: [{ type: "heatmap", coordinateSystem: "calendar", data: days.map((d) => [d.day, d.avg]) }],
-  });
-}
-function renderWords(words) {
-  const el = $("chartWords");
-  if (!words.length) { el.innerHTML = '<p class="hint">无文本消息</p>'; return; }
-  const max = Math.max(1, ...words.map((w) => w.count));
-  el.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center">` +
-    words.map((w, i) => {
-      const fs = 12 + Math.round((w.count / max) * 22);
-      const hue = (i * 47) % 360;
-      return `<span style="font-size:${fs}px;color:hsl(${hue},65%,42%);line-height:1.5">${escapeHtml(w.word)}</span>`;
-    }).join("") + `</div>`;
-}
-function renderEmoMonth(monthly) {
-  const el = $("chartEmoMonth");
-  if (!dashCharts.emoMonth) dashCharts.emoMonth = echarts.init(el);
-  // 按月份聚合情感均值（模拟：从daily emotions聚合到月）
-  // 如果后端没有按月聚合的接口，展示空图
-  if (!monthly || !monthly.length) { dashCharts.emoMonth.clear(); el.innerHTML = '<p class="hint">暂无情绪趋势数据</p>'; return; }
-  dashCharts.emoMonth.setOption({
-    tooltip: { trigger: "axis" },
-    grid: { left: 40, right: 16, top: 16, bottom: 24 },
-    xAxis: { type: "category", data: monthly.map((m) => m.month), axisLabel: { fontSize: 11, rotate: 45 } },
-    yAxis: { type: "value", min: -1, max: 1, splitLine: { lineStyle: { type: "dashed" } } },
-    visualMap: false,
-    series: [{
-      type: "bar", data: monthly.map((m) => m.count > 0 ? (m.avg_emo || 0) : null),
-      itemStyle: { color: (p) => p.value >= 0 ? "#3b8f5a" : "#d94e5d" },
-      barWidth: "60%",
-    }],
-  });
-}
-async function loadDashboard() {
-  const wxid = $("dashTalker").value;
-  if (!wxid) { alert("请选择联系人/群"); return; }
-  try {
-    const [s, e, w, em] = await Promise.all([
-      api(`/api/talker/${encodeURIComponent(wxid)}/stats`),
-      api(`/api/talker/${encodeURIComponent(wxid)}/emotions`),
-      api(`/api/talker/${encodeURIComponent(wxid)}/words`),
-      api(`/api/talker/${encodeURIComponent(wxid)}/emotions/monthly`),
-    ]);
-    renderIntimacy(s.monthly || []);
-    renderEmotion(e.days || []);
-    renderWords(w.words || []);
-    renderEmoMonth(em.months || []);
-  } catch (err) { alert("仪表盘加载失败：" + err.message); }
-}
-async function loadDashTalkers() {
-  try {
-    const d = await api("/api/contacts");
-    const sel = $("dashTalker");
-    sel.innerHTML = d.items.map((c) => `<option value="${escapeHtml(c.wxid)}">${escapeHtml(c.display_name)}（${c.type}）</option>`).join("");
-    if (d.items.length) loadDashboard();
-  } catch (e) { /* 无数据时静默 */ }
-}
-$("btnDashLoad").onclick = loadDashboard;
-
-// ---------- AI 问答（SSE 流式） ----------
-const PRESETS = {
-  deepseek: { baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat" },
-  gpt: { baseUrl: "https://api.openai.com/v1", model: "gpt-4o-mini" },
-  glm: { baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4-flash" },
-  qwen: { baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-turbo" },
-  moonshot: { baseUrl: "https://api.moonshot.cn/v1", model: "moonshot-v1-8k" },
-  custom: { baseUrl: "", model: "" },
-};
-
-async function loadConfigForm() {
-  try {
-    const cfg = await api("/api/config");
-    // Key 混淆后只展示状态，不填充密码框
-    $("cfgApiKey").value = cfg.has_key ? "(已配置，保存新 Key 可覆盖)" : "";
-    $("cfgBaseUrl").value = cfg.base_url || "";
-    $("cfgModel").value = cfg.model || "";
-    // 匹配预设
-    let matched = "custom";
-    for (const [k, v] of Object.entries(PRESETS)) {
-      if (v.baseUrl && v.baseUrl === cfg.base_url && v.model === cfg.model) { matched = k; break; }
-    }
-    $("cfgPreset").value = matched;
-  } catch (e) { /* 无配置时忽略 */ }
-}
-
-$("cfgPreset").onchange = (e) => {
-  const p = PRESETS[e.target.value];
-  if (p && p.baseUrl) {
-    $("cfgBaseUrl").value = p.baseUrl;
-    $("cfgModel").value = p.model;
-  }
-};
-
-$("btnCfgSave").onclick = async () => {
-  const msg = $("cfgMsg");
-  msg.className = "msg";
-  msg.textContent = "保存中…";
-  try {
-    await api("/api/config", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        api_key: $("cfgApiKey").value.trim() || null,
-        base_url: $("cfgBaseUrl").value.trim() || null,
-        model: $("cfgModel").value.trim() || null,
-      }),
-    });
-    msg.className = "msg ok";
-    msg.textContent = "✓ 配置已保存";
-  } catch (e) {
-    msg.className = "msg err";
-    msg.textContent = "保存失败: " + e.message;
-  }
-};
-
-$("btnCfgTest").onclick = async () => {
-  const msg = $("cfgMsg");
-  msg.className = "msg";
-  msg.textContent = "测试连接中…";
-  // 先保存
-  await $("btnCfgSave").click();
-  // 发一条测试问答
-  try {
-    const res = await fetch("/api/chat/stream?question=ping", {
-      headers: { "Accept": "text/event-stream" },
-    });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = "", got = false;
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      const lines = buf.split("\n");
-      buf = lines.pop();
-      for (const ln of lines) {
-        if (ln.startsWith("data: ")) {
-          try { const j = JSON.parse(ln.slice(6)); if (j.delta) got = true; } catch (_) {}
-        }
-      }
-      if (got) break;
-    }
-    reader.cancel();
-    msg.className = "msg ok";
-    msg.textContent = got ? "✓ 连接成功，API 可用" : "连接成功但无输出";
-  } catch (e) {
-    msg.className = "msg err";
-    msg.textContent = "连接失败: " + e.message;
-  }
-};
-
-async function loadChatStatus() {
-  const el = $("chatStatus");
-  try {
-    const cfg = await api("/api/config");
-    if (cfg.has_key) {
-      el.className = "msg ok";
-      el.textContent = `✓ 已配置 ${cfg.model || "model"}（${cfg.base_url || "default"}）`;
-    } else {
-      el.className = "msg";
-      el.textContent = "未配置 API Key，仅显示本地检索片段。请前往「⚙设置」配置。";
-    }
-  } catch (e) {
-    el.textContent = "配置检测失败: " + e.message;
-  }
-}
-
-async function fillChatScopes() {
-  const sel = $("chatScope");
-  if (sel.dataset.filled) return;
-  try {
-    const d = await api("/api/contacts");
-    const opts = ['<option value="">全部数据</option>'];
-    (d.items || []).forEach((c) => {
-      opts.push(`<option value="${escapeHtml(c.wxid)}">${escapeHtml(c.display_name)}（${c.type}）</option>`);
-    });
-    sel.innerHTML = opts.join("");
-    sel.dataset.filled = "1";
-  } catch (e) { /* 无数据时仅保留全部 */ }
-}
-
-let chatAbort = null;
-function appendChat(role, text) {
-  const box = $("chatHistory");
-  const div = document.createElement("div");
-  div.style.marginBottom = "8px";
-  div.style.padding = "8px 12px";
-  div.style.borderRadius = "8px";
-  div.style.background = role === "user" ? "#eef2ff" : "#f1f5f9";
-  div.style[role === "user" ? "marginLeft" : "marginRight"] = "10%";
-  div.innerHTML = `<strong>${role === "user" ? "你" : "AI"}</strong><pre style="margin:4px 0 0;white-space:pre-wrap;font-family:inherit">${escapeHtml(text)}</pre>`;
-  box.appendChild(div);
-  box.scrollTop = box.scrollHeight;
-  return div;
-}
-
-async function sendChat() {
-  const input = $("chatInput");
-  const q = input.value.trim();
-  if (!q) return;
-  input.value = "";
-  appendChat("user", q);
-  const aiBubble = appendChat("ai", "");
-  const pre = aiBubble.querySelector("pre");
-
-  if (chatAbort) chatAbort.abort();
-  chatAbort = new AbortController();
-
-  const scope = $("chatScope").value;
-  const url = "/api/chat/stream?question=" + encodeURIComponent(q) + (scope ? "&scope_talker=" + encodeURIComponent(scope) : "");
-  try {
-    const res = await fetch(url, { signal: chatAbort.signal, headers: { "Accept": "text/event-stream" } });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = "", full = "";
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      const lines = buf.split("\n");
-      buf = lines.pop();
-      for (const ln of lines) {
-        if (ln.startsWith("data: ")) {
-          try {
-            const j = JSON.parse(ln.slice(6));
-            if (j.delta) { full += j.delta; pre.textContent = full; }
-            if (j.done) { reader.cancel(); }
-          } catch (_) {}
-        }
-      }
-    }
-  } catch (e) {
-    if (e.name !== "AbortError") {
-      pre.textContent += "\n[错误: " + e.message + "]";
-    }
-  }
-  $("chatHistory").scrollTop = $("chatHistory").scrollHeight;
-}
-
-$("btnChatSend").onclick = sendChat;
-$("chatInput").addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
-});
-
-window.addEventListener("resize", () => Object.values(dashCharts).forEach((c) => c.resize()));
+// ===== AI Chat =====
+const PRESETS={deepseek:{baseUrl:"https://api.deepseek.com/v1",model:"deepseek-chat"},gpt:{baseUrl:"https://api.openai.com/v1",model:"gpt-4o-mini"},glm:{baseUrl:"https://open.bigmodel.cn/api/paas/v4",model:"glm-4-flash"},qwen:{baseUrl:"https://dashscope.aliyuncs.com/compatible-mode/v1",model:"qwen-turbo"},moonshot:{baseUrl:"https://api.moonshot.cn/v1",model:"moonshot-v1-8k"},custom:{baseUrl:"",model:""}};
+async function loadConfigForm(){try{const cfg=await api("/api/config");$("cfgApiKey").value=cfg.has_key?"(已配置)":"";$("cfgBaseUrl").value=cfg.base_url||"";$("cfgModel").value=cfg.model||"";let m="custom";for(const[k,v]of Object.entries(PRESETS)){if(v.baseUrl&&v.baseUrl===cfg.base_url&&v.model===cfg.model){m=k;break}}$("cfgPreset").value=m}catch(e){}}
+$("cfgPreset").onchange=e=>{const p=PRESETS[e.target.value];if(p&&p.baseUrl){$("cfgBaseUrl").value=p.baseUrl;$("cfgModel").value=p.model}};
+$("btnCfgSave").onclick=async()=>{const msg=$("cfgMsg");msg.className="msg";msg.textContent="保存中…";try{await api("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({api_key:$("cfgApiKey").value.trim()||null,base_url:$("cfgBaseUrl").value.trim()||null,model:$("cfgModel").value.trim()||null})});msg.className="msg ok";msg.textContent="✓ 配置已保存"}catch(e){msg.className="msg err";msg.textContent="保存失败: "+e.message}};
+$("btnCfgTest").onclick=async()=>{const msg=$("cfgMsg");msg.className="msg";msg.textContent="测试连接中…";await $("btnCfgSave").click();try{const res=await fetch("/api/chat/stream?question=ping",{headers:{"Accept":"text/event-stream"}});if(!res.ok)throw new Error("HTTP "+res.status);const reader=res.body.getReader(),decoder=new TextDecoder();let buf="",got=false;while(true){const{value,done}=await reader.read();if(done)break;buf+=decoder.decode(value,{stream:true});const lines=buf.split("\n");buf=lines.pop();for(const ln of lines){if(ln.startsWith("data: ")){try{const j=JSON.parse(ln.slice(6));if(j.delta)got=true}catch(_){}}}if(got)break}reader.cancel();msg.className="msg ok";msg.textContent=got?"✓ 连接成功，API 可用":"连接成功但无输出"}catch(e){msg.className="msg err";msg.textContent="连接失败: "+e.message}};
+async function loadChatStatus(){const el=$("chatStatus");try{const cfg=await api("/api/config");el.className="msg"+(cfg.has_key?" ok":"");el.textContent=cfg.has_key?`✓ 已配置 ${cfg.model||"model"}`:"未配置 API Key，仅显示本地片段"}catch(e){el.textContent="配置检测失败: "+e.message}}
+async function fillChatScopes(){const sel=$("chatScope");if(sel.dataset.filled)return;try{const d=await api("/api/contacts");const opts=['<option value="">全部数据</option>'];(d.items||[]).forEach(c=>opts.push(`<option value="${esc(c.wxid)}">${esc(c.display_name)}（${c.type}）</option>`));sel.innerHTML=opts.join("");sel.dataset.filled="1"}catch(e){}}
+let chatAbort=null;function appendChat(role,text){const box=$("chatHistory");const div=document.createElement("div");div.className="chat-bubble "+role;div.innerHTML=`<div class="role">${role==="user"?"你":"AI"}</div><div class="text">${esc(text)}</div>`;box.appendChild(div);box.scrollTop=box.scrollHeight;return div}
+async function sendChat(){const input=$("chatInput"),q=input.value.trim();if(!q)return;input.value="";appendChat("user",q);const aiBubble=appendChat("ai",""),textEl=aiBubble.querySelector(".text");if(chatAbort)chatAbort.abort();chatAbort=new AbortController();const scope=$("chatScope").value,url="/api/chat/stream?question="+encodeURIComponent(q)+(scope?"&scope_talker="+encodeURIComponent(scope):"");try{const res=await fetch(url,{signal:chatAbort.signal,headers:{"Accept":"text/event-stream"}});if(!res.ok)throw new Error("HTTP "+res.status);const reader=res.body.getReader(),decoder=new TextDecoder();let buf="",full="";while(true){const{value,done}=await reader.read();if(done)break;buf+=decoder.decode(value,{stream:true});const lines=buf.split("\n");buf=lines.pop();for(const ln of lines){if(ln.startsWith("data: ")){try{const j=JSON.parse(ln.slice(6));if(j.delta){full+=j.delta;textEl.textContent=full}if(j.done){reader.cancel()}}catch(_){}}}}}catch(e){if(e.name!=="AbortError")textEl.textContent+="\n[错误: "+e.message+"]"}$("chatHistory").scrollTop=$("chatHistory").scrollHeight}
+$("btnChatSend").onclick=sendChat;$("chatInput").addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendChat()}});
+window.addEventListener("resize",()=>Object.values(dashCharts).forEach(c=>c.resize()));
 </script>
 </body>
 </html>

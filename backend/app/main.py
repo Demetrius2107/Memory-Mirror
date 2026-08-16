@@ -34,6 +34,8 @@ from backend.app.demo_data import DB_PATH, generate_demo_data
 from backend.app.importer import run_import
 from backend.app.llm import build_rag_prompt, has_key, load_config, save_config, stream_chat
 from backend.app.rag_index import build_index, search
+from backend.decrypt.key_extract import scan_process, enable_debug_privilege
+import psutil
 
 app = FastAPI(title="MemoryMirror Engine", version="0.1.0")
 
@@ -464,6 +466,12 @@ class ConfigRequest(BaseModel):
     model: str | None = None
 
 
+class DecryptRequest(BaseModel):
+    db_path: str
+    key: str
+    out_path: str
+
+
 @app.post("/api/analyze")
 async def start_analyze(req: AnalyzeRequest):
     """分析任务（范围可选 + 可并行）：对解密数据区（demo.db）按范围聚合统计，
@@ -595,6 +603,78 @@ def talker_words(wxid: str, top: int = 100):
     for (content,) in rows:
         c.update(t for t in _tokenize(content) if not _ARTIFACT.match(t))
     return {"wxid": wxid, "words": [{"word": w, "count": n} for w, n in c.most_common(top)]}
+
+
+# ==================== 微信解密相关 API ====================
+
+
+@app.get("/api/wechat/scan")
+def scan_wechat():
+    """扫描微信本地存储目录，返回所有微信账号信息。"""
+    docs = Path.home() / "Documents"
+    accounts = []
+    for root_name in ["WeChat Files", "WeChatAppEx Files", "Weixin Files"]:
+        root = docs / root_name
+        if not root.is_dir():
+            continue
+        for sub in root.iterdir():
+            if not sub.is_dir() or sub.name.startswith("."):
+                continue
+            msg_db = sub / "Msg" / "MSG.db"
+            micro_msg = sub / "Msg" / "MicroMsg.db"
+            contact_db = sub / "Config" / "contact.db"
+            session_db = sub / "Msg" / "Session.db"
+            accounts.append({
+                "wxid": sub.name,
+                "path": str(sub),
+                "has_msg_db": msg_db.is_file() or micro_msg.is_file(),
+                "msg_db_path": str(msg_db) if msg_db.is_file() else str(micro_msg) if micro_msg.is_file() else None,
+                "contact_db_path": str(contact_db) if contact_db.is_file() else None,
+                "session_db_path": str(session_db) if session_db.is_file() else None,
+            })
+    return {"accounts": accounts}
+
+
+@app.get("/api/wechat/extract-key")
+def extract_wechat_key():
+    """从微信进程内存提取数据库加密密钥。"""
+    try:
+        wx_pid = None
+        for p in psutil.process_iter(["pid", "name"]):
+            name = (p.info["name"] or "").lower()
+            if name in ("weixin.exe", "wechat.exe", "wechatappex.exe"):
+                wx_pid = p.info["pid"]
+                break
+        if not wx_pid:
+            return {"success": False, "error": "未找到运行中的微信进程，请先登录微信"}
+        candidates = scan_process(wx_pid)
+        if not candidates:
+            return {"success": False, "error": "未在内存中找到密钥"}
+        # scan_process 返回 [(enc_key, salt), ...]，取第一个 enc_key
+        key = candidates[0][0].hex()
+        return {"success": True, "key": key, "masked": key[:8] + "****" + key[-4:]}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/wechat/decrypt")
+def decrypt_wechat_db(req: DecryptRequest):
+    """解密微信数据库。
+    请求体: {"db_path": "...", "key": "...", "out_path": "..."}
+    """
+    try:
+        from backend.decrypt.crypto import decrypt_database, verify_page1_hmac
+        data = Path(req.db_path).read_bytes()
+        key_bytes = bytes.fromhex(req.key)
+        if not verify_page1_hmac(data[:4096], key_bytes):
+            return {"success": False, "error": "密钥校验失败"}
+        plain = decrypt_database(data, key_bytes)
+        out = Path(req.out_path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(plain)
+        return {"success": True, "out_path": str(out)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 @app.post("/api/demo")
