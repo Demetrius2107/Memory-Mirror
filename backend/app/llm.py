@@ -45,8 +45,12 @@ def has_key() -> bool:
     return bool(load_config().get("api_key"))
 
 
-def build_rag_prompt(question: str, hits: list[dict], max_chars: int = 3000) -> list[dict]:
-    """RAG：检索片段组装为 system 上下文 + user 问题（PRD §4.5 Token 控制）。"""
+def build_rag_prompt(question: str, hits: list[dict], max_chars: int = 3000, scope_label: str = "全部数据") -> list[dict]:
+    """RAG：检索片段组装为 system 上下文 + user 问题（PRD §4.5 Token 控制）。
+
+    scope_label：本次分析范围（全部 / 某联系人 / 某群），注入 system 提示，
+    引导模型仅基于该范围片段作答。
+    """
     parts = []
     for i, h in enumerate(hits, 1):
         m = h.get("metadata") or {}
@@ -54,8 +58,8 @@ def build_rag_prompt(question: str, hits: list[dict], max_chars: int = 3000) -> 
     context = "\n".join(parts)[:max_chars]
     system = (
         "你是「记忆镜像」，基于用户本地微信聊天记录回答关于其社交关系、回忆与情绪的"
-        "问题。以下是从聊天记录检索到的相关片段，请仅基于片段回答，引用时注明片段编号；"
-        "片段不足时明确说明。\n\n检索片段：\n" + context
+        f"问题。本次分析范围：{scope_label}。以下是从聊天记录检索到的相关片段，"
+        "请仅基于片段回答，引用时注明片段编号；片段不足时明确说明。\n\n检索片段：\n" + context
     )
     return [
         {"role": "system", "content": system},

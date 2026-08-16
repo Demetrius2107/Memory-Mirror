@@ -34,21 +34,19 @@ _STOPWORDS = {
     "可以", "我们", "你们", "他们", "自己", "没有",
 }
 
-_ASCII_WORD = re.compile(r"[a-zA-Z0-9_]+")
 _CJK_RUN = re.compile(r"[\u4e00-\u9fff]+")
 
 
 def _tokenize(text: str) -> list[str]:
-    """快速分词（对大规模语料友好，替代 jieba——jieba 对百万级片段太慢）。
+    """CJK 字符 n-gram 分词（单字 + 相邻双字），过滤停用词。
 
-    策略：ASCII 词 + CJK 单字 + CJK 相邻双字（bigram）+ 停用词过滤。
-    比 jieba 快约 100 倍，适合 188 万片段的 fit/embed；检索质量对兜底 TF-IDF 足够。
+    仅保留 CJK：真实聊天内容含大量 ASCII 噪声（\\xHH 转义 xfd/xcc、wxid_xxx、
+    URL/哈希/0k），任何 ASCII 通道都会污染 top-512 词表（已有两轮正则实证）。
+    中文聊天检索的核心内容全在 CJK；英文词（ok/hello/api）对兜底 TF-IDF 收益低，
+    多语言由后续 bge 阶段承担。字符 n-gram 是中文 IR 无词典的标准兜底做法。
     """
     text = unicodedata.normalize("NFKC", text or "").lower()
     tokens: list[str] = []
-    for w in _ASCII_WORD.findall(text):
-        if w and w not in _STOPWORDS:
-            tokens.append(w)
     for seg in _CJK_RUN.findall(text):
         for ch in seg:
             if ch not in _STOPWORDS:
@@ -74,15 +72,28 @@ class TfidfEmbedder:
         self.idf: np.ndarray | None = None
 
     def fit(self, texts) -> "TfidfEmbedder":
-        """拟合词表。texts 支持 list 或任意迭代器（生成器可避免大语料驻留内存）。"""
+        """拟合词表。texts 支持 list 或任意迭代器（生成器可避免大语料驻留内存）。
+
+        词表策略（中文 IR 字符 n-gram 的标准做法）：双字优先（判别力强：
+        晚安/今天/哈哈），单字补充覆盖（我/你）。防止 512 槽位被高频单字占满、
+        查询双字词落空、向量退化为低区分度。
+        """
         df: Counter[str] = Counter()
         n = 0
         for t in texts:
             df.update(set(_tokenize(t)))
             n += 1
         cand = [(w, c) for w, c in df.items() if c >= self.min_df]
-        cand.sort(key=lambda x: -x[1])
-        self.vocab = {w: i for i, (w, _) in enumerate(cand[: self.dim])}
+        bigrams = sorted((w for w, _ in cand if len(w) == 2), key=lambda w: -df[w])
+        singles = sorted((w for w, _ in cand if len(w) == 1), key=lambda w: -df[w])
+        nb = int(self.dim * 0.75)  # 75% 槽位给双字
+        self.vocab = {w: i for i, w in enumerate(bigrams[:nb])}
+        # 单字从实际已用槽位继续编号（勿硬编码 nb+i：词表不满 512 时会造成
+        # 编号空洞，idf 长度 < max index，embed 时越界——小语料必现）
+        next_i = len(self.vocab)
+        for w in singles[: self.dim - next_i]:
+            self.vocab[w] = next_i
+            next_i += 1
         self.idf = np.array(
             [math.log((1 + n) / (1 + df[w])) + 1.0 for w in self.vocab],
             dtype=np.float32,

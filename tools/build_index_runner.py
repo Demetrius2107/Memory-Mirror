@@ -27,9 +27,10 @@ def cb(**kw):
 
 
 if __name__ == "__main__":
-    log(f"== build start {time.strftime('%H:%M:%S')} ==")
+    log(f"== build start {time.strftime('%H:%M:%S')} (checkpoint resume) ==")
+    cp = ROOT / "data" / "index_checkpoint.txt"
     try:
-        n = build_index(progress_cb=cb)
+        n = build_index(progress_cb=cb, checkpoint=cp)
         log(f"DONE {n}")
     except Exception:
         import traceback
