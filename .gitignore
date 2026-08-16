@@ -25,6 +25,7 @@ src-tauri/gen/
 # ---- 第三方工具源码/二进制（MemoTrace/wx_key/WeFlow 等，仅调研用，不入库） ----
 tools/memotrace_src/
 tools/wxkey_src/
+tools/wxkey_git/
 tools/weflow/
 tools/*.zip
 
